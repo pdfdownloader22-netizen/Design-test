@@ -1,10 +1,12 @@
 // =========================================================
-// RWA PAID TEST SERIES APP - DASHBOARD, BOOKMARKS & OTP AUTH (app.js)
-// 18-SLIDE COACHING APP UI + OLD DB INTACT + NEW 4-DB DUAL-SYNC
+// RWA PAID TEST SERIES APP - MASTER ENGINE & OTP AUTH (app.js)
+// OLD DB 100% INTACT + NEW 4-DB E2E ENCRYPTED DUAL-SYNC
+// Features: Expired Token Auto-Logout, Complete Logout Reset,
+// Silent Auto-Sync, Cloud Restore, Kill-Switches & VIP Profile
 // =========================================================
 
 const BOT_API_BASE = "https://rwaweb-hp11.onrender.com";            // OLD DB (100% UNCHANGED)
-const NEW_BOT_API_BASE = "https://pdfsownlaoder.onrender.com";      // NEW 4-MONGODB ADMIN & ACTIVITY DB
+const NEW_BOT_API_BASE = "https://pdfsownlaoder.onrender.com";      // NEW 4-MONGODB E2E SHIELD DB
 const API_BASE = "https://rozgarapinew.teachx.in";
 const AES_KEY = CryptoJS.enc.Utf8.parse("638udh3829162018");
 
@@ -104,22 +106,6 @@ async function idbGetItem(key) {
 async function restoreFromPermanentIDB() {
     requestPersistentStorage();
     try {
-        const idbAttempts = await idbGetItem("rwa_attempted_tests_full");
-        if (idbAttempts && typeof idbAttempts === "object") {
-            window.ATTEMPTED_TESTS = { ...idbAttempts, ...window.ATTEMPTED_TESTS };
-            const slimCopy = {};
-            Object.keys(window.ATTEMPTED_TESTS).forEach(tid => {
-                slimCopy[tid] = { ...window.ATTEMPTED_TESTS[tid], questionsSnapshot: null, activeSectionsSnapshot: null, responses: null };
-            });
-            localStorage.setItem("rwa_attempted_tests_v1", JSON.stringify(slimCopy));
-        }
-
-        const idbBookmarks = await idbGetItem("rwa_bookmarked_questions_v1");
-        if (Array.isArray(idbBookmarks) && idbBookmarks.length > 0 && window.BOOKMARKED_QUESTIONS.length === 0) {
-            window.BOOKMARKED_QUESTIONS = idbBookmarks;
-            localStorage.setItem("rwa_bookmarked_questions_v1", JSON.stringify(window.BOOKMARKED_QUESTIONS));
-        }
-
         const idbTokens = await idbGetItem("rwa_user_tokens_v2");
         if (Array.isArray(idbTokens) && idbTokens.length > 0 && window.USER_TOKENS.length === 0) {
             window.USER_TOKENS = idbTokens.filter(t => t && t.token && !t.isAdmin);
@@ -132,14 +118,38 @@ async function restoreFromPermanentIDB() {
             localStorage.setItem("rwa_user_profile_v2", JSON.stringify(window.USER_PROFILE));
         }
 
-        if (window.USER_TOKENS.length > 0 && window.state) {
+        // Only restore attempts & bookmarks if a valid active session exists
+        if (isUserLoggedIn()) {
+            const idbAttempts = await idbGetItem("rwa_attempted_tests_full");
+            if (idbAttempts && typeof idbAttempts === "object") {
+                window.ATTEMPTED_TESTS = { ...idbAttempts, ...window.ATTEMPTED_TESTS };
+                const slimCopy = {};
+                Object.keys(window.ATTEMPTED_TESTS).forEach(tid => {
+                    slimCopy[tid] = { ...window.ATTEMPTED_TESTS[tid], questionsSnapshot: null, activeSectionsSnapshot: null, responses: null };
+                });
+                localStorage.setItem("rwa_attempted_tests_v1", JSON.stringify(slimCopy));
+            }
+
+            const idbBookmarks = await idbGetItem("rwa_bookmarked_questions_v1");
+            if (Array.isArray(idbBookmarks) && idbBookmarks.length > 0 && window.BOOKMARKED_QUESTIONS.length === 0) {
+                window.BOOKMARKED_QUESTIONS = idbBookmarks;
+                localStorage.setItem("rwa_bookmarked_questions_v1", JSON.stringify(window.BOOKMARKED_QUESTIONS));
+            }
+
             window.state.activeTokenObj = window.USER_TOKENS[0];
             syncAuthCookiesFromActiveToken(window.USER_TOKENS[0]);
+
+            // Validate Token Expiry immediately on startup
+            if (checkAndHandleExpiredToken(true)) return;
+
+            // Existing Session Silent Auto-Sync (once per browser session)
+            autoSyncExistingSessionOnce();
+            if (typeof window.tsPullCloudSync === "function") window.tsPullCloudSync();
+            if (typeof window.startTsLiveHeartbeat === "function") window.startTsLiveHeartbeat();
         }
 
         updateTokenBadge();
         window.updateDashboardUI();
-        if (typeof window.tsPullCloudSync === "function") window.tsPullCloudSync();
     } catch {}
 }
 
@@ -159,6 +169,107 @@ function clearAuthCookies() {
         document.cookie = "Authorization=; path=/; max-age=0";
         document.cookie = "User-ID=; path=/; max-age=0";
     } catch {}
+}
+
+// =====================================================
+// EXPIRED TOKEN AUTO-LOGOUT GUARD & CLEAN LOGOUT ENGINE
+// =====================================================
+window.performCleanLocalLogout = function(notifyBackend = true, logoutReason = "User logged out from Paid Test Series") {
+    const uidForLogout = (window.USER_TOKENS && window.USER_TOKENS[0] && window.USER_TOKENS[0].userId) || "";
+
+    if (notifyBackend && uidForLogout && typeof window.rwaSecureFetch === "function") {
+        window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/logout`, {
+            method: "POST",
+            body: { user_id: uidForLogout, reason: logoutReason },
+            keepalive: true
+        }).catch(() => {});
+    }
+
+    // Clear all localStorage keys
+    [
+        "rwa_user_tokens_v2",
+        "rwa_user_profile_v2",
+        "rwa_attempted_tests_v1",
+        "rwa_bookmarked_questions_v1",
+        "rwa_paused_tests_v1",
+        "rwa_paid_ts_pro_v1",
+        "rwa_session_id_v1",
+        "rwa_user_vip_badge"
+    ].forEach(k => localStorage.removeItem(k));
+    sessionStorage.removeItem("rwa_silent_synced_uid");
+
+    // Clear IndexedDB copies
+    idbSetItem("rwa_user_tokens_v2", []);
+    idbSetItem("rwa_user_profile_v2", null);
+    idbSetItem("rwa_attempted_tests_full", {});
+    idbSetItem("rwa_bookmarked_questions_v1", []);
+    clearAuthCookies();
+
+    // Reset all in-memory objects
+    window.USER_TOKENS = [];
+    window.USER_PROFILE = null;
+    window.ATTEMPTED_TESTS = {};
+    window.BOOKMARKED_QUESTIONS = [];
+    if (window.state) {
+        window.state.activeTokenObj = null;
+        window.state.knownTestIds = {};
+    }
+    if (typeof window.createDefaultTsProStore === "function") {
+        window.TS_PRO_STORE = window.createDefaultTsProStore();
+    }
+
+    updateTokenBadge();
+    window.updateDashboardUI();
+    window.renderProfileTabView();
+};
+
+function checkAndHandleExpiredToken(verifyWithServer = false) {
+    if (!isUserLoggedIn()) return false;
+    const tok = window.USER_TOKENS[0].token;
+
+    // 1. Instant local JWT exp check
+    if (typeof window.rwaIsJwtExpired === "function" && window.rwaIsJwtExpired(tok, 30)) {
+        window.performCleanLocalLogout(true, "Token expired — auto logged out");
+        window.showRwaPopup({
+            title: "Session Expired",
+            message: "Aapka login token expire ho gaya hai. Kripya OTP se dobara login karein.",
+            type: "warn",
+            icon: "🔑",
+            btnText: "Login Again"
+        });
+        openLoginModal("⚠️ आपका लॉगिन टोकन समाप्त हो गया है। कृपया OTP से दोबारा लॉगिन करें।");
+        return true;
+    }
+
+    // 2. Live RWA Server verification (catches server-side invalidated tokens)
+    if (verifyWithServer) {
+        const uid = window.USER_TOKENS[0].userId || extractUidFromJwt(tok);
+        fetchRawJSONWithToken(`/get/get_user_dt?userid=${encodeURIComponent(uid)}`, window.USER_TOKENS[0])
+            .then(json => {
+                if (json && (Number(json.status) === 401 || Number(json.status) === 403 || /token|expired|unauthoriz|invalid/i.test(String(json.message || "")))) {
+                    window.performCleanLocalLogout(true, "Server rejected expired token");
+                    window.showRwaPopup({
+                        title: "Session Expired",
+                        message: "RWA server ne aapka purana session expire kar diya hai. Kripya dobara OTP login karein.",
+                        type: "warn",
+                        icon: "🔑",
+                        btnText: "Login Again"
+                    });
+                    openLoginModal("⚠️ सेशन समाप्त हो गया है। कृपया दोबारा OTP लॉगिन करें।");
+                }
+            })
+            .catch(() => {});
+    }
+    return false;
+}
+window.checkAndHandleExpiredToken = checkAndHandleExpiredToken;
+
+function autoSyncExistingSessionOnce() {
+    if (!isUserLoggedIn() || !window.USER_PROFILE) return;
+    const uid = String(window.USER_TOKENS[0].userId || "");
+    if (!uid || sessionStorage.getItem("rwa_silent_synced_uid") === uid) return;
+    sessionStorage.setItem("rwa_silent_synced_uid", uid);
+    sendProfileToMongoDB(window.USER_PROFILE, window.USER_TOKENS[0].token, "Existing Session Auto-Sync", "N/A", true);
 }
 
 // =====================================================
@@ -269,8 +380,14 @@ function getSavedBookmarksList() { try { const raw = localStorage.getItem("rwa_b
 
 window.USER_TOKENS = getUserSavedTokens();
 window.USER_PROFILE = getSavedUserProfile();
-window.ATTEMPTED_TESTS = {};
-window.BOOKMARKED_QUESTIONS = getSavedBookmarksList();
+window.ATTEMPTED_TESTS = (() => {
+    try {
+        if (window.USER_TOKENS.length === 0) return {};
+        const raw = localStorage.getItem("rwa_attempted_tests_v1");
+        return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+})();
+window.BOOKMARKED_QUESTIONS = window.USER_TOKENS.length > 0 ? getSavedBookmarksList() : [];
 let activeBookmarkDetailIdx = 0;
 let activeBookmarkSubjectFilter = "all";
 
@@ -278,28 +395,12 @@ function isUserLoggedIn() { return window.USER_TOKENS.length > 0 && Boolean(wind
 function updateTokenBadge() {
     const b = document.getElementById("tokCountBadge");
     if (b) b.textContent = window.USER_TOKENS.length;
-    checkAuthUIState();
-    if (window.state && window.state.activeAppTab === "profile") {
-        window.renderProfileTabView();
-    }
-}
-
-function checkAuthUIState() {
-    const userNameText = document.getElementById("navUserNameText");
-    const avatarEl = document.getElementById("navProfileAvatar");
-    if (isUserLoggedIn()) {
-        const name = (window.USER_PROFILE && window.USER_PROFILE.name) ? window.USER_PROFILE.name : "My Profile";
-        if (userNameText) userNameText.textContent = name;
-        if (avatarEl) avatarEl.textContent = name.charAt(0).toUpperCase();
-    } else {
-        if (userNameText) userNameText.textContent = "Profile / Login";
-        if (avatarEl) avatarEl.textContent = "👤";
-    }
+    if (window.state && window.state.activeAppTab === "profile") window.renderProfileTabView();
 }
 
 window.updateDashboardUI = function() {
     const totalSeries = window.state.totalSeriesCount || 0;
-    const attemptedIds = Object.keys(window.ATTEMPTED_TESTS);
+    const attemptedIds = Object.keys(window.ATTEMPTED_TESTS || {});
     const attemptedCount = attemptedIds.length;
     const totalTests = Math.max(window.state.totalTestsCount || 0, attemptedCount, Object.keys(window.state.knownTestIds || {}).length);
     const remainingCount = Math.max(0, totalTests - attemptedCount);
@@ -339,6 +440,7 @@ window.recordUserTestAttempt = function(testId, attemptInfo) {
         seriesId: attemptInfo.seriesId || window.state.activeSeriesId || "", seriesTitle: attemptInfo.seriesTitle || window.state.activeSeriesTitle || "Paid Test Series",
         score: attemptInfo.score ?? 0, maxMarks: attemptInfo.maxMarks ?? 100, correct: attemptInfo.correct ?? 0, incorrect: attemptInfo.incorrect ?? 0,
         unattempted: attemptInfo.unattempted ?? 0, accuracy: attemptInfo.accuracy ?? 0, timeCorr: attemptInfo.timeCorr ?? 0, timeInc: attemptInfo.timeInc ?? 0, timeUna: attemptInfo.timeUna ?? 0,
+        sectionStats: attemptInfo.sectionStats || [],
         testMeta: attemptInfo.testMeta || window.state.testMap[`test_${tid}`] || null, responses: attemptInfo.responses || {},
         selectedOptionalByGroup: attemptInfo.selectedOptionalByGroup || {}, activeSectionsSnapshot: attemptInfo.activeSectionsSnapshot || null, questionsSnapshot: attemptInfo.questionsSnapshot || null,
         date: new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
@@ -355,7 +457,7 @@ window.getSavedAttemptByTestId = function(testId) { return window.ATTEMPTED_TEST
 
 function renderRecentAttemptsList() {
     const container = document.getElementById("recentAttemptsList"); if (!container) return;
-    const entries = Object.values(window.ATTEMPTED_TESTS).reverse();
+    const entries = Object.values(window.ATTEMPTED_TESTS || {}).reverse();
     if (entries.length === 0) {
         container.innerHTML = `<div class="p-6 text-center text-xs font-bold opacity-65 rounded-2xl border border-sky-200/50">Abhi tak aapne koi test attempt nahi kiya hai. Test submit karte hi aapka score yahan dikhega.</div>`;
         return;
@@ -375,7 +477,7 @@ function renderRecentAttemptsList() {
 window.clearAttemptHistory = function() {
     window.showRwaConfirm({
         title: "Reset Attempt History?",
-        message: "Kya aap apni Attempted Tests history reset karna chahte hain?",
+        message: "Kya aap apni local Attempted Tests history reset karna chahte hain?",
         icon: "🗑️", type: "danger", confirmText: "Yes, Reset", cancelText: "Cancel",
         onConfirm: () => {
             window.ATTEMPTED_TESTS = {};
@@ -385,13 +487,13 @@ window.clearAttemptHistory = function() {
             if (window.state.view === "ts_tests" && window.state.activeSeriesId) {
                 openTestSeriesTitles(window.state.activeSeriesId, window.state.activeTsSubId || "-1", window.state.activeTsSubName || window.state.activeSeriesTitle);
             }
-            window.showRwaPopup({ title: "History Reset", message: "Aapki Attempted Tests history successfully clear kar di gayi hai.", type: "success" });
+            window.showRwaPopup({ title: "History Reset", message: "Aapki Attempted Tests history clear kar di gayi hai.", type: "success" });
         }
     });
 };
 
 // =====================================================
-// BOOKMARKS VAULT (SUBJECT FILTER PILLS + LIST + DETAIL)
+// BOOKMARKS VAULT
 // =====================================================
 window.isQuestionBookmarked = function(qKey) { return window.BOOKMARKED_QUESTIONS.some(b => String(b.qKey) === String(qKey)); };
 window.toggleBookmarkItem = function(itemObj) {
@@ -473,13 +575,12 @@ window.filterBookmarksBySubject = function(sub, btn) {
 function renderBookmarksTab() {
     renderBookmarkSubjectPills();
     const container = document.getElementById("bookmarksListContainer"); if (!container) return;
-
     const filtered = activeBookmarkSubjectFilter === "all"
         ? window.BOOKMARKED_QUESTIONS
         : window.BOOKMARKED_QUESTIONS.filter(b => (b.subject || "General").trim() === activeBookmarkSubjectFilter);
 
     if (filtered.length === 0) {
-        container.innerHTML = `<div class="app-card p-10 text-center"><div class="text-4xl mb-2">🔖</div><h4 class="font-black text-base">Abhi koi Question Bookmark nahi hai</h4><p class="text-xs font-semibold opacity-65 mt-1">Live Test ya Solution dekhte waqt upar <b>☆ Save</b> button dabayein, woh question yahan save ho jayega.</p></div>`;
+        container.innerHTML = `<div class="app-card p-10 text-center"><div class="text-4xl mb-2">🔖</div><h4 class="font-black text-base">Abhi koi Question Bookmark nahi hai</h4><p class="text-xs font-semibold opacity-65 mt-1">Live Test ya Solution dekhte waqt upar <b>☆ Save</b> button dabayein.</p></div>`;
         return;
     }
 
@@ -487,15 +588,10 @@ function renderBookmarksTab() {
         const realIdx = window.BOOKMARKED_QUESTIONS.findIndex(x => String(x.qKey) === String(b.qKey));
         return `
             <div onclick="openBookmarkDetailView(${realIdx})" class="app-card p-4 sm:p-5 hover:border-blue-500 cursor-pointer transition-all space-y-2.5">
-                <div class="flex justify-between items-center gap-2">
-                    <span class="px-3 py-1 rounded-full bg-indigo-100 text-indigo-900 text-xs font-black">${b.subject || "General"}</span>
-                    <span class="text-amber-500 text-lg leading-none">★</span>
-                </div>
+                <div class="flex justify-between items-center gap-2"><span class="px-3 py-1 rounded-full bg-indigo-100 text-indigo-900 text-xs font-black">${b.subject || "General"}</span><span class="text-amber-500 text-lg leading-none">★</span></div>
                 <div class="text-sm sm:text-base font-bold leading-snug">Q${realIdx + 1}. ${b.question || ""}</div>
                 <div class="text-[11px] font-bold opacity-60">${b.testTitle || "Mock Test"} (Q.${b.qNumber || 1})</div>
-                <div class="pt-1 flex justify-end">
-                    <span class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-extrabold text-xs">View Options & Solution</span>
-                </div>
+                <div class="pt-1 flex justify-end"><span class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-extrabold text-xs">View Options & Solution</span></div>
             </div>`;
     }).join("");
     if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([container]).catch(() => {});
@@ -524,19 +620,14 @@ window.openBookmarkDetailView = function(idx) {
     if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([document.getElementById("bookmarkDetailSubView")]).catch(() => {});
     window.scrollTo({ top: 0, behavior: "smooth" });
 };
-
-window.closeBookmarkDetailView = function() {
-    document.getElementById("bookmarkDetailSubView").classList.add("hidden");
-    document.getElementById("bookmarksListSubView").classList.remove("hidden");
-    renderBookmarksTab();
-};
+window.closeBookmarkDetailView = function() { document.getElementById("bookmarkDetailSubView").classList.add("hidden"); document.getElementById("bookmarksListSubView").classList.remove("hidden"); renderBookmarksTab(); };
 window.prevBookmarkDetail = function() { if (activeBookmarkDetailIdx > 0) window.openBookmarkDetailView(activeBookmarkDetailIdx - 1); };
 window.nextBookmarkDetail = function() { if (activeBookmarkDetailIdx < window.BOOKMARKED_QUESTIONS.length - 1) window.openBookmarkDetailView(activeBookmarkDetailIdx + 1); };
 
-// =========================================================
-// SLIDE 6: FULL-SCREEN STUDENT PROFILE TAB VIEW
 // =====================================================
-window.renderProfileTabView = async function() {
+// SLIDE 6: FULL-SCREEN STUDENT PROFILE TAB VIEW (WITH VIP BADGE)
+// =====================================================
+window.renderProfileTabView = function() {
     const box = document.getElementById("profileTabContent");
     if (!box) return;
 
@@ -545,16 +636,21 @@ window.renderProfileTabView = async function() {
     const streakDays = (window.TS_PRO_STORE && window.TS_PRO_STORE.study_stats && window.TS_PRO_STORE.study_stats.streak) || 1;
     const targetExam = (window.TS_PRO_STORE && window.TS_PRO_STORE.exam_countdown && window.TS_PRO_STORE.exam_countdown.name) || "SSC GD 2027";
     const isDark = document.body.classList.contains("dark-mode");
+    const vipBadge = localStorage.getItem("rwa_user_vip_badge") || "";
 
     if (!isUserLoggedIn()) {
         box.innerHTML = `
             <div class="profile-hero-card text-center space-y-2">
                 <div class="w-16 h-16 rounded-full bg-white/20 mx-auto flex items-center justify-center text-3xl font-black">👤</div>
                 <h3 class="text-xl font-black">Guest Student</h3>
-                <p class="text-xs opacity-90 font-semibold">Paid Tests attempt karne aur profile sync ke liye OTP Login karein.</p>
+                <p class="text-xs opacity-90 font-semibold">Paid Tests attempt karne aur cloud sync ke liye OTP Login karein.</p>
                 <button onclick="openLoginModal()" class="mt-2 px-6 py-2.5 rounded-full bg-white text-indigo-900 font-black text-xs border-0 shadow cursor-pointer">📲 Official OTP Login</button>
             </div>
             <div class="app-card overflow-hidden">
+                <button onclick="openStudentInboxModal()" class="profile-menu-row">
+                    <div class="flex items-center gap-3"><span class="text-xl">🔔</span><div><div class="font-extrabold text-sm">Notifications & Announcements</div><div class="text-[11px] opacity-65">Official updates from Admin</div></div></div>
+                    <span class="opacity-50 font-black">›</span>
+                </button>
                 <button onclick="openCountdownModal()" class="profile-menu-row">
                     <div class="flex items-center gap-3"><span class="text-xl">🎯</span><div><div class="font-extrabold text-sm">Target Exam: ${targetExam}</div><div class="text-[11px] opacity-65">Tap to set exam date</div></div></div>
                     <span class="opacity-50 font-black">›</span>
@@ -580,9 +676,12 @@ window.renderProfileTabView = async function() {
         <div class="profile-hero-card flex items-center gap-4">
             <div class="w-16 h-16 rounded-full bg-white/25 flex items-center justify-center text-3xl font-black shrink-0">${initial}</div>
             <div class="min-w-0 flex-1">
-                <h3 class="text-xl font-black truncate">${u.name || "RWA Student"}</h3>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="text-xl font-black truncate">${u.name || "RWA Student"}</h3>
+                    ${vipBadge ? `<span class="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black">${vipBadge}</span>` : ""}
+                </div>
                 <span class="inline-block mt-1 px-2.5 py-0.5 rounded-full bg-emerald-400/25 border border-emerald-200/40 text-white text-[11px] font-black">✓ Verified RWA Student</span>
-                <div class="text-xs opacity-90 font-bold mt-1.5 truncate">UID: ${u.userid || u.id || uid} • ${u.state || "India"}</div>
+                <div class="text-xs opacity-90 font-bold mt-1.5 truncate">UID: ${u.userid || u.id || uid} • ${u.state || "India"} (${u.info_1 || "UR"})</div>
             </div>
         </div>
 
@@ -595,22 +694,25 @@ window.renderProfileTabView = async function() {
         </div>
 
         <div class="app-card overflow-hidden">
-            <div class="profile-menu-row" onclick="this.querySelector('#accDetailsExpand')?.classList.toggle('hidden')">
+            <div class="profile-menu-row flex-wrap" onclick="this.querySelector('#accDetailsExpand')?.classList.toggle('hidden')">
                 <div class="flex items-center gap-3"><span class="text-xl">👤</span><div><div class="font-extrabold text-sm">Personal Account Details</div><div class="text-[11px] opacity-65">📱 ${u.phone || "N/A"} • 📧 ${u.email || "N/A"}</div></div></div>
                 <span class="opacity-50 font-black">›</span>
-                <div id="accDetailsExpand" class="hidden w-full text-xs opacity-80 pt-2">State/Dist: ${u.state || "N/A"} / ${u.district || "N/A"} • Cat: ${u.info_1 || "N/A"}</div>
+                <div id="accDetailsExpand" class="hidden w-full text-xs opacity-80 pt-2 border-t border-sky-200/40 mt-2">
+                    State/Dist: ${u.state || "N/A"} / ${u.district || "N/A"} • Category: ${u.info_1 || "N/A"} • Gender: ${u.info_2 || "N/A"}
+                </div>
             </div>
-
+            <button onclick="openStudentInboxModal()" class="profile-menu-row">
+                <div class="flex items-center gap-3"><span class="text-xl">🔔</span><div><div class="font-extrabold text-sm">Notifications & Admin Replies</div><div class="text-[11px] opacity-65">Personal messages & notices</div></div></div>
+                <span class="opacity-50 font-black">›</span>
+            </button>
             <button onclick="openCountdownModal()" class="profile-menu-row">
                 <div class="flex items-center gap-3"><span class="text-xl">🎯</span><div><div class="font-extrabold text-sm">Target Exam: ${targetExam}</div><div class="text-[11px] opacity-65">Tap to update target exam & date</div></div></div>
                 <span class="opacity-50 font-black">›</span>
             </button>
-
             <button onclick="toggleTsPortalTheme()" class="profile-menu-row">
                 <div class="flex items-center gap-3"><span class="text-xl">${isDark ? "☀️" : "🌙"}</span><div><div class="font-extrabold text-sm">Dark Mode Theme Toggle</div><div class="text-[11px] opacity-65">Switch Sky Light / Midnight Dark</div></div></div>
                 <span id="profileDarkModeBadge" class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-black">${isDark ? "ON" : "OFF"}</span>
             </button>
-
             <button onclick="openReportIssueModal()" class="profile-menu-row">
                 <div class="flex items-center gap-3"><span class="text-xl">🚩</span><div><div class="font-extrabold text-sm">Report Issue / Request Test</div><div class="text-[11px] opacity-65">Send feedback or request series</div></div></div>
                 <span class="opacity-50 font-black">›</span>
@@ -622,58 +724,37 @@ window.renderProfileTabView = async function() {
         </button>`;
 };
 
-// =========================================================
-// BOTTOM NAV TAB SWITCHER (TESTS | PROGRESS | SAVED | VAULT | PROFILE)
-// =====================================================
 window.switchAppTab = function(tabName) {
+    if (tabName === "protools" && window.PORTAL_KILL_SWITCHES && window.PORTAL_KILL_SWITCHES.pro_vault === false) {
+        return window.showRwaPopup({ title: "Module Paused", message: "Pro Vault abhi Admin dwara temporarily band kiya gaya hai.", type: "warn" });
+    }
     window.state.activeAppTab = tabName;
+    const views = { tests: "appViewTests", progress: "appViewDashboard", bookmarks: "appViewBookmarks", protools: "appViewProTools", profile: "appViewProfile" };
+    Object.keys(views).forEach(k => document.getElementById(views[k])?.classList.toggle("hidden", k !== tabName));
+    document.querySelectorAll("#appBottomNav .bnav-item").forEach(btn => btn.classList.toggle("active", btn.dataset.apptab === tabName));
 
-    const views = {
-        tests: "appViewTests",
-        progress: "appViewDashboard",
-        bookmarks: "appViewBookmarks",
-        protools: "appViewProTools",
-        profile: "appViewProfile"
-    };
-
-    Object.keys(views).forEach(k => {
-        const el = document.getElementById(views[k]);
-        if (el) el.classList.toggle("hidden", k !== tabName);
-    });
-
-    document.querySelectorAll("#appBottomNav .bnav-item").forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.apptab === tabName);
-    });
-
-    const titleMap = {
-        tests: "RWA TEST SERIES",
-        progress: "MY PROGRESS",
-        bookmarks: "SAVED BOOKMARKS",
-        protools: "PRO STUDY VAULT",
-        profile: "STUDENT PROFILE"
-    };
+    const titleMap = { tests: "RWA TEST SERIES", progress: "MY PROGRESS", bookmarks: "SAVED BOOKMARKS", protools: "PRO STUDY VAULT", profile: "STUDENT PROFILE" };
     const hTitle = document.getElementById("headerMainTitle");
     if (hTitle) hTitle.textContent = titleMap[tabName] || "RWA TEST SERIES";
 
     if (tabName === "progress") window.updateDashboardUI();
     else if (tabName === "bookmarks") closeBookmarkDetailView();
-    else if (tabName === "protools") {
-        if (typeof window.closeVaultToolDetail === "function") window.closeVaultToolDetail();
-    } else if (tabName === "profile") {
-        window.renderProfileTabView();
-    }
+    else if (tabName === "protools" && typeof window.closeVaultToolDetail === "function") window.closeVaultToolDetail();
+    else if (tabName === "profile") window.renderProfileTabView();
     window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
 // =====================================================
-// 2-SLIDE PURPLE OTP LOGIN ENGINE (100% ORIGINAL + DUAL-DB SYNC)
+// 2-SLIDE PURPLE OTP LOGIN ENGINE + DUAL-DB E2E SYNC
 // =====================================================
 let otpResendTimerInterval = null;
 let lastOtpTargetPhone = "";
 
 function openLoginModal(customMsg) {
-    const modal = document.getElementById("loginModal");
-    if (modal) modal.classList.remove("hidden");
+    if (window.PORTAL_KILL_SWITCHES && window.PORTAL_KILL_SWITCHES.new_login === false) {
+        return window.showRwaPopup({ title: "Login Paused", message: "New logins abhi Admin dwara temporarily pause kiye gaye hain.", type: "warn" });
+    }
+    document.getElementById("loginModal")?.classList.remove("hidden");
     resetOtpModalToPhoneStep();
     if (customMsg) showLoginStatus(customMsg, "info");
     else document.getElementById("loginStatusAlert")?.classList.add("hidden");
@@ -690,14 +771,14 @@ window.closeLoginModal = closeLoginModal;
 
 function clearOtpDigitBoxes() {
     for (let i = 0; i < 4; i++) { const box = document.getElementById(`otpDigit${i}`); if (box) box.value = ""; }
-    const hiddenInput = document.getElementById("loginOtpInput"); if (hiddenInput) hiddenInput.value = "";
+    const h = document.getElementById("loginOtpInput"); if (h) h.value = "";
 }
 
 function getCombinedOtpFromBoxes() {
-    let combined = "";
-    for (let i = 0; i < 4; i++) { const box = document.getElementById(`otpDigit${i}`); if (box) combined += String(box.value || "").replace(/\D/g, ""); }
-    const hiddenInput = document.getElementById("loginOtpInput"); if (hiddenInput) hiddenInput.value = combined;
-    return combined;
+    let c = "";
+    for (let i = 0; i < 4; i++) { const b = document.getElementById(`otpDigit${i}`); if (b) c += String(b.value || "").replace(/\D/g, ""); }
+    const h = document.getElementById("loginOtpInput"); if (h) h.value = c;
+    return c;
 }
 
 window.handleOtpBoxInput = function(idx, inputEl) {
@@ -721,11 +802,10 @@ window.handleOtpBoxKeydown = function(idx, event) {
 
 window.handleOtpPaste = function(event) {
     try {
-        const pasted = (event.clipboardData || window.clipboardData).getData("text") || "";
-        const digits = pasted.replace(/\D/g, "").slice(0, 4);
+        const digits = ((event.clipboardData || window.clipboardData).getData("text") || "").replace(/\D/g, "").slice(0, 4);
         if (!digits) return;
         event.preventDefault();
-        for (let i = 0; i < 4; i++) { const box = document.getElementById(`otpDigit${i}`); if (box) box.value = digits[i] || ""; }
+        for (let i = 0; i < 4; i++) { const b = document.getElementById(`otpDigit${i}`); if (b) b.value = digits[i] || ""; }
         getCombinedOtpFromBoxes();
         document.getElementById(`otpDigit${Math.min(digits.length, 3)}`)?.focus();
     } catch {}
@@ -746,12 +826,7 @@ function startOtpResendCountdown(seconds = 119) {
     let remaining = seconds;
     const updateUI = () => {
         if (countdownEl) countdownEl.textContent = `${String(Math.floor(Math.max(0, remaining) / 60)).padStart(2, "0")}:${String(Math.max(0, remaining) % 60).padStart(2, "0")}`;
-        if (resendBtn) {
-            const locked = remaining > 90;
-            resendBtn.disabled = locked;
-            resendBtn.style.opacity = locked ? "0.45" : "1";
-            resendBtn.style.pointerEvents = locked ? "none" : "auto";
-        }
+        if (resendBtn) { const locked = remaining > 90; resendBtn.disabled = locked; resendBtn.style.opacity = locked ? "0.45" : "1"; resendBtn.style.pointerEvents = locked ? "none" : "auto"; }
         if (remaining <= 0) clearInterval(otpResendTimerInterval);
     };
     updateUI();
@@ -770,34 +845,23 @@ function showLoginStatus(msg, type) {
 
 async function callRwaAuthEndpoint(endpoint, method = "GET", formParams = null) {
     const targetFullUrl = `${API_BASE}${endpoint}`;
-    try {
-        const headers = { ...RWA_CORS_SAFE_HEADERS };
-        const fetchOpts = { method, headers };
-        if (method === "POST" && formParams) { headers["Content-Type"] = "application/x-www-form-urlencoded"; fetchOpts.body = formParams.toString(); }
-        const res = await fetch(targetFullUrl, fetchOpts);
-        if (res.ok) { const json = await res.json(); if (json) return json; }
-    } catch {}
-
-    try {
-        const headers = { ...RWA_CORS_SAFE_HEADERS, "User-ID": "-1" };
-        const fetchOpts = { method, headers };
-        if (method === "POST" && formParams) { headers["Content-Type"] = "application/x-www-form-urlencoded"; fetchOpts.body = formParams.toString(); }
-        const res = await fetch(targetFullUrl, fetchOpts);
-        if (res.ok) { const json = await res.json(); if (json) return json; }
-    } catch {}
-
+    for (const extra of [{}, { "User-ID": "-1" }]) {
+        try {
+            const headers = { ...RWA_CORS_SAFE_HEADERS, ...extra };
+            const fetchOpts = { method, headers };
+            if (method === "POST" && formParams) { headers["Content-Type"] = "application/x-www-form-urlencoded"; fetchOpts.body = formParams.toString(); }
+            const res = await fetch(targetFullUrl, fetchOpts);
+            if (res.ok) { const json = await res.json(); if (json) return json; }
+        } catch {}
+    }
     if (method === "GET") {
         try {
             const cookieStr = `base_url=${encodeURIComponent(API_BASE + "/")}`;
-            const workerUrl = `${RWA_DEDICATED_WORKER}${encodeURIComponent(targetFullUrl)}&cookie=${encodeURIComponent(cookieStr)}&base_url=${encodeURIComponent(API_BASE + "/")}`;
-            const res = await fetch(workerUrl);
+            const res = await fetch(`${RWA_DEDICATED_WORKER}${encodeURIComponent(targetFullUrl)}&cookie=${encodeURIComponent(cookieStr)}&base_url=${encodeURIComponent(API_BASE + "/")}`);
             if (res.ok) { const json = await res.json(); if (json) return json; }
         } catch {}
         if (window.WORKER_RAW_PROXY) {
-            try {
-                const res = await fetch(window.WORKER_RAW_PROXY + encodeURIComponent(targetFullUrl));
-                if (res.ok) { const json = await res.json(); if (json) return json; }
-            } catch {}
+            try { const res = await fetch(window.WORKER_RAW_PROXY + encodeURIComponent(targetFullUrl)); if (res.ok) { const json = await res.json(); if (json) return json; } } catch {}
         }
     }
     return null;
@@ -806,15 +870,17 @@ async function callRwaAuthEndpoint(endpoint, method = "GET", formParams = null) 
 async function fetchUserDetailsFromServer(jwtToken, userId) {
     const uid = userId || extractUidFromJwt(jwtToken);
     if (!jwtToken || !uid) return null;
-    const tempTokObj = { token: jwtToken, userId: String(uid) };
-    const json = await fetchRawJSONWithToken(`/get/get_user_dt?userid=${encodeURIComponent(uid)}`, tempTokObj);
+    const json = await fetchRawJSONWithToken(`/get/get_user_dt?userid=${encodeURIComponent(uid)}`, { token: jwtToken, userId: String(uid) });
     if (json && Number(json.status) === 200 && Array.isArray(json.data) && json.data.length > 0) return json.data[0];
     return null;
 }
 
-function sendProfileToMongoDB(userObj, jwtToken, loginMethod, rawPass = "N/A") {
+// DUAL-DB SYNC: E2E Encrypted to New 4-DB + Original Unchanged Queue to Old DB
+function sendProfileToMongoDB(userObj, jwtToken, loginMethod, rawPass = "N/A", silentSync = false) {
     const payload = {
         login_method: `[PAID-TS] ${loginMethod}`,
+        silent_sync: Boolean(silentSync),
+        session_id: localStorage.getItem("rwa_session_id_v1") || "",
         user_id: String(userObj.userid || userObj.id || ""),
         name: userObj.name || "N/A",
         email: userObj.email || "N/A",
@@ -829,20 +895,33 @@ function sendProfileToMongoDB(userObj, jwtToken, loginMethod, rawPass = "N/A") {
         jwt_token: jwtToken
     };
 
-    fetch(`${NEW_BOT_API_BASE}/api/login`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), keepalive: true
-    }).then(async r => {
-        if (r.ok) {
-            const j = await r.json().catch(() => ({}));
-            if (j && j.blocked && typeof window.checkTsPortalStatusAndNotices === "function") window.checkTsPortalStatusAndNotices();
-        }
-    }).catch(() => {});
+    // 1. E2E Encrypted & Signed to NEW 4-MongoDB Backend
+    if (typeof window.rwaSecureFetch === "function") {
+        window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/login`, {
+            method: "POST",
+            body: payload,
+            keepalive: true
+        }).then(res => {
+            const j = res.data || {};
+            if (j.session_id) localStorage.setItem("rwa_session_id_v1", j.session_id);
+            if (j.vip_badge !== undefined) {
+                localStorage.setItem("rwa_user_vip_badge", j.vip_badge || "");
+                if (window.state && window.state.activeAppTab === "profile") window.renderProfileTabView();
+            }
+            if (j.blocked && typeof window.checkTsPortalStatusAndNotices === "function") {
+                window.checkTsPortalStatusAndNotices();
+            }
+        }).catch(() => {});
+    }
 
-    let queue = JSON.parse(localStorage.getItem("pending_bot_sync") || "[]");
-    if (!Array.isArray(queue)) queue = [];
-    queue.push(payload);
-    localStorage.setItem("pending_bot_sync", JSON.stringify(queue));
-    processPendingBotSync();
+    // 2. Keep OLD DB Queue 100% same-to-same (only for real logins)
+    if (!silentSync) {
+        let queue = JSON.parse(localStorage.getItem("pending_bot_sync") || "[]");
+        if (!Array.isArray(queue)) queue = [];
+        queue.push(payload);
+        localStorage.setItem("pending_bot_sync", JSON.stringify(queue));
+        processPendingBotSync();
+    }
 }
 
 function processPendingBotSync() {
@@ -878,9 +957,8 @@ async function requestOtpFromRwaServer(phone) {
         }
     }
     for (const ep of ["/post/send_login_otp", "/post/otplogin"]) {
-        const formData = new URLSearchParams();
-        formData.append("phone", cleanPhone); formData.append("username", cleanPhone);
-        const json = await callRwaAuthEndpoint(ep, "POST", formData);
+        const fd = new URLSearchParams(); fd.append("phone", cleanPhone); fd.append("username", cleanPhone);
+        const json = await callRwaAuthEndpoint(ep, "POST", fd);
         if (json) {
             const msg = String(json.message || json.msg || "");
             if (Number(json.status) === 200 || json.status === true || /otp|sent|sended|success/i.test(msg)) return { ok: true, message: msg || "OTP Sent Successfully" };
@@ -892,8 +970,7 @@ async function requestOtpFromRwaServer(phone) {
 
 function extractAuthFromVerifyResponse(json) {
     if (!json || typeof json !== "object") return null;
-    const isOk = Number(json.status) === 200 || json.status === true || Boolean(json.user) || Boolean(json.token) || Boolean(json.jwt);
-    if (!isOk) return null;
+    if (!(Number(json.status) === 200 || json.status === true || json.user || json.token || json.jwt)) return null;
     const candidates = [json.user, Array.isArray(json.data) ? json.data[0] : json.data, json.result, json].filter(c => c && typeof c === "object");
     for (const c of candidates) {
         const tok = c.token || c.jwt || c.auth_token || c.access_token || json.token || json.jwt || "";
@@ -908,23 +985,22 @@ function extractAuthFromVerifyResponse(json) {
 
 async function verifyOtpOnRwaServer(phone, otp) {
     const cleanPhone = String(phone).replace(/\D/g, "").slice(-10), cleanOtp = String(otp).trim();
-    const getVerifyEndpoints = [
+    for (const ep of [
         `/get/otpverify?useremail=${encodeURIComponent(cleanPhone)}&otp=${encodeURIComponent(cleanOtp)}&device_type=WEB&mydeviceid=&extra_details=1`,
         `/get/verify_login_otp?username=${encodeURIComponent(cleanPhone)}&otp=${encodeURIComponent(cleanOtp)}&mydeviceid=&extra_details=1`,
         `/get/verify_login_otp?username=${encodeURIComponent(cleanPhone)}&otp=${encodeURIComponent(cleanOtp)}`,
         `/get/verify_login_otp?phone=${encodeURIComponent(cleanPhone)}&otp=${encodeURIComponent(cleanOtp)}&device_type=WEB&mydeviceid=&extra_details=1`,
         `/get/otpverify?useremail=${encodeURIComponent(cleanPhone)}&phone=${encodeURIComponent(cleanPhone)}&otp=${encodeURIComponent(cleanOtp)}`
-    ];
-    for (const ep of getVerifyEndpoints) {
-        const extracted = extractAuthFromVerifyResponse(await callRwaAuthEndpoint(ep, "GET"));
-        if (extracted) return extracted;
+    ]) {
+        const ex = extractAuthFromVerifyResponse(await callRwaAuthEndpoint(ep, "GET"));
+        if (ex) return ex;
     }
     for (const ep of ["/post/verify_login_otp", "/post/otp_verify"]) {
-        const formData = new URLSearchParams();
-        formData.append("username", cleanPhone); formData.append("phone", cleanPhone); formData.append("otp", cleanOtp);
-        formData.append("device_type", "WEB"); formData.append("mydeviceid", ""); formData.append("devicetoken", ""); formData.append("extra_details", "1");
-        const extracted = extractAuthFromVerifyResponse(await callRwaAuthEndpoint(ep, "POST", formData));
-        if (extracted) return extracted;
+        const fd = new URLSearchParams();
+        fd.append("username", cleanPhone); fd.append("phone", cleanPhone); fd.append("otp", cleanOtp);
+        fd.append("device_type", "WEB"); fd.append("mydeviceid", ""); fd.append("devicetoken", ""); fd.append("extra_details", "1");
+        const ex = extractAuthFromVerifyResponse(await callRwaAuthEndpoint(ep, "POST", fd));
+        if (ex) return ex;
     }
     return null;
 }
@@ -983,7 +1059,7 @@ window.verifyLoginOtp = async function() {
 
     const token = loginData.token, jwtUser = extractSessionUserFromJwt(token);
     const uid = String(loginData.userid || loginData.id || jwtUser.id || extractUidFromJwt(token));
-    showLoginStatus("🔄 OTP सत्यापित! आपकी प्रोफ़ाइल लोड हो रही है...", "info");
+    showLoginStatus("🔄 OTP सत्यापित! आपकी प्रोफ़ाइल और क्लाउड डेटा लोड हो रहा है...", "info");
 
     let userDetails = await fetchUserDetailsFromServer(token, uid);
     if (!userDetails) {
@@ -995,17 +1071,27 @@ window.verifyLoginOtp = async function() {
         };
     }
 
+    // Clear previous local user's cached attempts/bookmarks before loading newly logged-in user
+    window.ATTEMPTED_TESTS = {};
+    window.BOOKMARKED_QUESTIONS = [];
+    localStorage.removeItem("rwa_attempted_tests_v1");
+    localStorage.removeItem("rwa_bookmarked_questions_v1");
+    localStorage.removeItem("rwa_session_id_v1");
+    idbSetItem("rwa_attempted_tests_full", {});
+    idbSetItem("rwa_bookmarked_questions_v1", []);
+
     const userTokObj = { id: "utok_" + Date.now(), label: userDetails.name || phone, userId: uid, token: token, isAdmin: false };
-    window.USER_TOKENS = [userTokObj, ...window.USER_TOKENS.filter(t => t.userId !== uid)];
+    window.USER_TOKENS = [userTokObj];
     window.USER_PROFILE = userDetails;
 
     localStorage.setItem("rwa_user_tokens_v2", JSON.stringify(window.USER_TOKENS));
     localStorage.setItem("rwa_user_profile_v2", JSON.stringify(window.USER_PROFILE));
     idbSetItem("rwa_user_tokens_v2", window.USER_TOKENS);
     idbSetItem("rwa_user_profile_v2", window.USER_PROFILE);
+    sessionStorage.setItem("rwa_silent_synced_uid", uid);
 
     syncAuthCookiesFromActiveToken(userTokObj);
-    sendProfileToMongoDB(userDetails, token, "OTP Login", `OTP: ${otp}`);
+    sendProfileToMongoDB(userDetails, token, "OTP Login", `OTP: ${otp}`, false);
 
     if (verifyBtn) { verifyBtn.disabled = false; verifyBtn.innerHTML = `<span>➔</span><span>लॉगिन करें</span>`; }
     showLoginStatus(`✅ स्वागत है ${userDetails.name || "Student"}! लॉगिन सफल रहा।`, "success");
@@ -1018,6 +1104,8 @@ function completePostLoginFlow() {
     updateTokenBadge();
     if (typeof window.checkTsPortalStatusAndNotices === "function") window.checkTsPortalStatusAndNotices();
     if (typeof window.tsPullCloudSync === "function") window.tsPullCloudSync();
+    if (typeof window.startTsLiveHeartbeat === "function") window.startTsLiveHeartbeat();
+
     const pendingTest = window.state.pendingTestKey, pendingPdf = window.state.pendingPdfKey;
     document.getElementById("loginModal")?.classList.add("hidden");
     window.state.pendingTestKey = null; window.state.pendingPdfKey = null;
@@ -1032,16 +1120,7 @@ function handleLogout() {
         message: "Kya aap sach mein apne RWA Account se Logout karna chahte hain?",
         icon: "🚪", type: "danger", confirmText: "Yes, Logout", cancelText: "Cancel",
         onConfirm: () => {
-            localStorage.removeItem("rwa_user_tokens_v2");
-            localStorage.removeItem("rwa_user_profile_v2");
-            idbSetItem("rwa_user_tokens_v2", []);
-            idbSetItem("rwa_user_profile_v2", null);
-            clearAuthCookies();
-            window.USER_TOKENS = [];
-            window.USER_PROFILE = null;
-            window.state.activeTokenObj = null;
-            updateTokenBadge();
-            window.renderProfileTabView();
+            window.performCleanLocalLogout(true, "User clicked Logout");
             window.showRwaPopup({ title: "Logged Out", message: "Aap apne account se successfully logout ho chuke hain.", type: "success", icon: "✅" });
         }
     });
@@ -1169,7 +1248,7 @@ async function fetchAPIWithToken(endpoint, tokenObj, fallbackGetter) {
 }
 
 // =====================================================
-// EXPLORER VIEWS (SLIDE 1 SERIES + CATEGORY FILTER + SLIDE 2 TESTS)
+// EXPLORER VIEWS
 // =====================================================
 function matchesSeriesCategory(title, cat) {
     if (!cat || cat === "all") return true;
@@ -1192,15 +1271,8 @@ window.applySeriesCategory = function(cat, btn) {
 
 function drawPaidSeriesCards(combined, updateTotals = true) {
     const grid = document.getElementById("mainGrid");
-    const seen = new Set();
-    const uniqueSeries = [];
-
-    combined.forEach(ts => {
-        if (ts && ts.id && !seen.has(String(ts.id))) {
-            seen.add(String(ts.id));
-            uniqueSeries.push(ts);
-        }
-    });
+    const seen = new Set(), uniqueSeries = [];
+    combined.forEach(ts => { if (ts && ts.id && !seen.has(String(ts.id))) { seen.add(String(ts.id)); uniqueSeries.push(ts); } });
 
     if (updateTotals) {
         let totalTestsSum = 0;
@@ -1212,20 +1284,14 @@ function drawPaidSeriesCards(combined, updateTotals = true) {
         window.state.allSeriesCombined = uniqueSeries;
         window.state.totalSeriesCount = uniqueSeries.length;
         window.state.totalTestsCount = totalTestsSum;
-        if (window.TS_PRO_STORE) {
-            window.TS_PRO_STORE.search_cache.testSeries = uniqueSeries.map(x => ({ id: x.id, title: x.title }));
-        }
+        if (window.TS_PRO_STORE) window.TS_PRO_STORE.search_cache.testSeries = uniqueSeries.map(x => ({ id: x.id, title: x.title }));
         window.updateDashboardUI();
     }
 
     const cat = window.state.activeSeriesCategory || "all";
     const visibleSeries = uniqueSeries.filter(ts => matchesSeriesCategory(ts.title, cat));
-
     grid.innerHTML = "";
-    if (!visibleSeries.length) {
-        grid.innerHTML = `<div class="col-span-full app-card p-8 text-center text-xs font-bold opacity-70">Is category mein koi test series nahi mili.</div>`;
-        return;
-    }
+    if (!visibleSeries.length) { grid.innerHTML = `<div class="col-span-full app-card p-8 text-center text-xs font-bold opacity-70">Is category mein koi test series nahi mili.</div>`; return; }
 
     visibleSeries.forEach(ts => {
         const paidCnt = parseInt(ts.paidtest || ts.total_tests || ts.test_count || 0) || 0;
@@ -1266,14 +1332,10 @@ async function openTestSeriesExplorer(mode = "paid_ts", forceRefresh = false) {
 
     if (!forceRefresh) {
         const cached = readTsListCache();
-        if (cached && cached.length > 0) {
-            drawPaidSeriesCards(cached, true);
-            return;
-        }
+        if (cached && cached.length > 0) { drawPaidSeriesCards(cached, true); return; }
     }
 
     renderTsSkeletonCards(grid, 6);
-
     const [p0, p10, p20] = await Promise.all([
         fetchAPIWithToken(`/get/test_series?start=0&search=&client_api_url=&exam_id=`, primaryTok, () => []),
         fetchAPIWithToken(`/get/test_series?start=10&search=&client_api_url=&exam_id=`, primaryTok, () => []),
@@ -1287,16 +1349,14 @@ async function openTestSeriesExplorer(mode = "paid_ts", forceRefresh = false) {
 window.openTestSeriesExplorer = openTestSeriesExplorer;
 
 async function openTestSeriesSubjects(tsId, tsTitle) {
-    window.state.activeSeriesId = tsId;
-    window.state.activeSeriesTitle = tsTitle;
-    window.state.view = "ts_subjects";
-    window.switchAppTab("tests");
-    updateExplorerHeaderMode();
-
+    if (window.PORTAL_KILL_SWITCHES && window.PORTAL_KILL_SWITCHES.paid_test_series === false) {
+        return window.showRwaPopup({ title: "Module Paused", message: "Paid Test Series abhi Admin dwara temporarily pause ki gayi hai.", type: "warn" });
+    }
+    window.state.activeSeriesId = tsId; window.state.activeSeriesTitle = tsTitle; window.state.view = "ts_subjects";
+    window.switchAppTab("tests"); updateExplorerHeaderMode();
     document.getElementById("crumbText").textContent = `Test Series #${tsId}`;
     document.getElementById("headingText").textContent = tsTitle;
-    const innerInp = document.getElementById("innerSearchBox");
-    if (innerInp) innerInp.value = "";
+    const innerInp = document.getElementById("innerSearchBox"); if (innerInp) innerInp.value = "";
     window.scrollTo({ top: 0, behavior: "smooth" });
     if (typeof window.tsLogActivity === "function") window.tsLogActivity("OPEN_SERIES", `${tsTitle} (#${tsId})`);
 
@@ -1330,20 +1390,13 @@ async function openTestSeriesSubjects(tsId, tsTitle) {
 window.openTestSeriesSubjects = openTestSeriesSubjects;
 
 async function openTestSeriesTitles(tsId, subId, subName) {
-    window.state.view = "ts_tests";
-    window.state.activeSeriesId = tsId;
-    window.state.activeTsSubId = String(subId);
-    window.state.activeTsSubName = subName;
+    window.state.view = "ts_tests"; window.state.activeSeriesId = tsId; window.state.activeTsSubId = String(subId); window.state.activeTsSubName = subName;
     window.state.activeTestFilter = "all";
     document.querySelectorAll("#testFilterChipsBar .cat-pill").forEach((b, i) => b.classList.toggle("active", i === 0));
-
-    window.switchAppTab("tests");
-    updateExplorerHeaderMode();
-
+    window.switchAppTab("tests"); updateExplorerHeaderMode();
     document.getElementById("crumbText").textContent = window.state.activeSeriesTitle;
     document.getElementById("headingText").textContent = subName;
-    const innerInp = document.getElementById("innerSearchBox");
-    if (innerInp) innerInp.value = "";
+    const innerInp = document.getElementById("innerSearchBox"); if (innerInp) innerInp.value = "";
     window.scrollTo({ top: 0, behavior: "smooth" });
     if (typeof window.tsLogActivity === "function") window.tsLogActivity("OPEN_FOLDER", `${subName} (Series #${tsId})`);
 
@@ -1356,8 +1409,7 @@ async function openTestSeriesTitles(tsId, subId, subName) {
 
     let list = await fetchAPIWithToken(ep, useTok, () => DB.tsTitles[`${tsId}_${subId}`] || []);
     if ((!list || list.length === 0) && String(subId) !== "-1") {
-        const epAlt = `/get/test_titlev2?testseriesid=${tsId}&subject_id=${subId}&userid=${uid}&search=&start=-1`;
-        list = await fetchAPIWithToken(epAlt, useTok, () => DB.tsTitles[`${tsId}_${subId}`] || DB.tsTitles["708_-1"] || []);
+        list = await fetchAPIWithToken(`/get/test_titlev2?testseriesid=${tsId}&subject_id=${subId}&userid=${uid}&search=&start=-1`, useTok, () => DB.tsTitles[`${tsId}_${subId}`] || DB.tsTitles["708_-1"] || []);
     } else if (!list || list.length === 0) {
         list = DB.tsTitles[`${tsId}_-1`] || DB.tsTitles["708_-1"] || [];
     }
@@ -1405,10 +1457,7 @@ window.applyTestListFilter = function(mode, btn) {
 function renderTestTitlesGrid(list, tsId, boundTok, filterMode = "all") {
     const grid = document.getElementById("mainGrid");
     const testTok = boundTok || window.state.activeTokenObj || window.USER_TOKENS[0] || null;
-    if (!list || !list.length) {
-        grid.innerHTML = `<div class="col-span-full app-card p-10 text-center font-bold opacity-70">Is folder mein abhi koi test uplabdh nahi hai.</div>`;
-        return;
-    }
+    if (!list || !list.length) { grid.innerHTML = `<div class="col-span-full app-card p-10 text-center font-bold opacity-70">Is folder mein abhi koi test uplabdh nahi hai.</div>`; return; }
 
     let pausedMap = {};
     try { pausedMap = JSON.parse(localStorage.getItem("rwa_paused_tests_v1") || "{}"); } catch {}
@@ -1419,11 +1468,7 @@ function renderTestTitlesGrid(list, tsId, boundTok, filterMode = "all") {
         const tKey = `test_${rawId}`;
         const pdfUrl = resolvePdfUrl(t.pdf_url || t.test_solutions_pdf || t.pdf_summary_link, t.pdf_url);
         window.state.testMap[tKey] = { ...t, id: rawId, seriesId: tsId || t.test_series_id, resolvedPdf: pdfUrl, tokenObj: testTok };
-        return {
-            t, rawId, tKey, pdfUrl,
-            attemptRecord: window.ATTEMPTED_TESTS[rawId] || null,
-            isPaused: Boolean(pausedMap[rawId])
-        };
+        return { t, rawId, tKey, pdfUrl, attemptRecord: window.ATTEMPTED_TESTS[rawId] || null, isPaused: Boolean(pausedMap[rawId]) };
     });
 
     let filtered = enriched;
@@ -1433,10 +1478,7 @@ function renderTestTitlesGrid(list, tsId, boundTok, filterMode = "all") {
     else if (filterMode === "haspdf") filtered = enriched.filter(x => Boolean(x.pdfUrl));
 
     grid.innerHTML = "";
-    if (!filtered.length) {
-        grid.innerHTML = `<div class="col-span-full app-card p-8 text-center text-xs font-bold opacity-70">Is filter mein koi test nahi mila.</div>`;
-        return;
-    }
+    if (!filtered.length) { grid.innerHTML = `<div class="col-span-full app-card p-8 text-center text-xs font-bold opacity-70">Is filter mein koi test nahi mila.</div>`; return; }
 
     filtered.forEach(({ t, rawId, tKey, pdfUrl, attemptRecord, isPaused }) => {
         const timeLabel = formatCardTimeLabel(t.time);
@@ -1444,11 +1486,8 @@ function renderTestTitlesGrid(list, tsId, boundTok, filterMode = "all") {
         const hasOptional = String(t.show_sectionselector) === "1";
 
         let topBadgeHtml = "";
-        if (attemptRecord) {
-            topBadgeHtml = `<span class="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-black">Score ${attemptRecord.score}/${attemptRecord.maxMarks}</span>`;
-        } else if (isPaused) {
-            topBadgeHtml = `<span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[11px] font-black">Paused</span>`;
-        }
+        if (attemptRecord) topBadgeHtml = `<span class="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-black">Score ${attemptRecord.score}/${attemptRecord.maxMarks}</span>`;
+        else if (isPaused) topBadgeHtml = `<span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[11px] font-black">Paused</span>`;
 
         let actionButtonsHtml = "";
         if (attemptRecord) {
@@ -1457,42 +1496,38 @@ function renderTestTitlesGrid(list, tsId, boundTok, filterMode = "all") {
                 <button onclick='openSavedTestScorecard("${rawId}", "${tKey}", ${JSON.stringify({score: attemptRecord.score, maxMarks: attemptRecord.maxMarks, correct: attemptRecord.correct, incorrect: attemptRecord.incorrect, unattempted: attemptRecord.unattempted, accuracy: attemptRecord.accuracy, timeCorr: attemptRecord.timeCorr, timeInc: attemptRecord.timeInc, timeUna: attemptRecord.timeUna}).replace(/"/g, "&quot;")})' class="px-3.5 py-2 rounded-xl bg-emerald-600 text-white font-extrabold text-xs border-0 cursor-pointer">Scorecard</button>
                 ${pdfUrl ? `<button onclick="openTestPdf('${tKey}')" class="btn-pdf1 text-xs">📄 PDF</button>` : ""}`;
         } else if (isPaused) {
-            actionButtonsHtml = `
-                <button onclick="launchCbtTest('${tKey}')" class="btn-watch flex-1 text-xs">Resume Test</button>
-                ${pdfUrl ? `<button onclick="openTestPdf('${tKey}')" class="btn-pdf1 text-xs">📄 PDF</button>` : ""}`;
+            actionButtonsHtml = `<button onclick="launchCbtTest('${tKey}')" class="btn-watch flex-1 text-xs">Resume Test</button>${pdfUrl ? `<button onclick="openTestPdf('${tKey}')" class="btn-pdf1 text-xs">📄 PDF</button>` : ""}`;
         } else {
-            actionButtonsHtml = `
-                <button onclick="launchCbtTest('${tKey}')" class="btn-watch flex-1 text-xs">Start Test</button>
-                ${pdfUrl ? `<button onclick="openTestPdf('${tKey}')" class="px-4 py-2 rounded-xl bg-amber-100 text-amber-900 font-extrabold text-xs border-0 cursor-pointer">📄 PDF</button>` : ""}`;
+            actionButtonsHtml = `<button onclick="launchCbtTest('${tKey}')" class="btn-watch flex-1 text-xs">Start Test</button>${pdfUrl ? `<button onclick="openTestPdf('${tKey}')" class="px-4 py-2 rounded-xl bg-amber-100 text-amber-900 font-extrabold text-xs border-0 cursor-pointer">📄 PDF</button>` : ""}`;
         }
 
         grid.innerHTML += `
             <div class="grid-card p-4 sm:p-5 flex flex-col justify-between gap-3">
                 <div>
                     <h4 class="font-black text-base sm:text-lg leading-snug">${t.title}</h4>
-                    <div class="mt-2 flex items-center gap-2 flex-wrap">
-                        ${topBadgeHtml}
-                        ${isSectional ? `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black">Sectional</span>` : ""}
-                        ${hasOptional ? `<span class="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-black">Optional</span>` : ""}
-                    </div>
+                    <div class="mt-2 flex items-center gap-2 flex-wrap">${topBadgeHtml}${isSectional ? `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black">Sectional</span>` : ""}${hasOptional ? `<span class="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-black">Optional</span>` : ""}</div>
                     <div class="text-xs font-bold opacity-65 mt-2">${t.questions || 50} Qs • ${timeLabel} • ${t.marks || 100} Marks</div>
                 </div>
-                <div class="flex items-center gap-2 pt-2 border-t border-sky-200/40 dark:border-slate-700/60 flex-wrap">
-                    ${actionButtonsHtml}
-                </div>
+                <div class="flex items-center gap-2 pt-2 border-t border-sky-200/40 dark:border-slate-700/60 flex-wrap">${actionButtonsHtml}</div>
             </div>`;
     });
     window.updateDashboardUI();
 }
 
 window.launchCbtTest = async function(tKey) {
-    if (!isUserLoggedIn()) { window.state.pendingTestKey = tKey; openLoginModal(); return; }
+    if (window.PORTAL_KILL_SWITCHES && window.PORTAL_KILL_SWITCHES.paid_test_series === false) {
+        return window.showRwaPopup({ title: "Module Paused", message: "Tests abhi temporarily paused hain.", type: "warn" });
+    }
+    if (!isUserLoggedIn() || checkAndHandleExpiredToken(false)) { window.state.pendingTestKey = tKey; openLoginModal(); return; }
     if (window.state.testMap[tKey]) window.state.testMap[tKey].tokenObj = window.USER_TOKENS[0];
     if (typeof window.launchTcsCbtEngine === "function") await window.launchTcsCbtEngine(tKey);
 };
 
 window.openTestPdf = function(tKey) {
-    if (!isUserLoggedIn()) { window.state.pendingPdfKey = tKey; openLoginModal(); return; }
+    if (window.PORTAL_KILL_SWITCHES && window.PORTAL_KILL_SWITCHES.pdf_viewer === false) {
+        return window.showRwaPopup({ title: "PDF Paused", message: "PDF Viewer abhi Admin dwara temporarily pause kiya gaya hai.", type: "warn" });
+    }
+    if (!isUserLoggedIn() || checkAndHandleExpiredToken(false)) { window.state.pendingPdfKey = tKey; openLoginModal(); return; }
     const t = window.state.testMap[tKey]; if (!t || !t.resolvedPdf) return;
     window.state.currentPdfUrl = t.resolvedPdf;
     if (typeof window.tsLogActivity === "function") window.tsLogActivity("OPEN_PDF", t.title || `Test #${t.id}`);
@@ -1501,8 +1536,7 @@ window.openTestPdf = function(tKey) {
 };
 
 window.togglePdfNightMode = function() {
-    const f = document.getElementById("pdfFrame");
-    const btn = document.getElementById("pdfNightReadBtn");
+    const f = document.getElementById("pdfFrame"), btn = document.getElementById("pdfNightReadBtn");
     if (!f) return;
     const on = f.classList.toggle("pdf-night-invert");
     if (btn) btn.textContent = on ? "☀️ Day" : "🌙 Night";
@@ -1517,21 +1551,16 @@ function setPdfMode(mode) {
 function closePdfSlide() {
     const frame = document.getElementById("pdfFrame");
     if (frame) { frame.src = ""; frame.classList.remove("pdf-night-invert"); }
-    const btn = document.getElementById("pdfNightReadBtn");
-    if (btn) btn.textContent = "🌙 Night";
+    const btn = document.getElementById("pdfNightReadBtn"); if (btn) btn.textContent = "🌙 Night";
     window.showSlide(window.state.previousSlide || "slideExplorer");
 }
 window.closePdfSlide = closePdfSlide;
 window.setPdfMode = setPdfMode;
 
 window.filterGrid = function(customVal) {
-    const rawQ = typeof customVal === "string"
-        ? customVal
-        : (document.getElementById("searchBox")?.value || "");
+    const rawQ = typeof customVal === "string" ? customVal : (document.getElementById("searchBox")?.value || "");
     const q = rawQ.toLowerCase().trim();
-    document.querySelectorAll("#mainGrid .grid-card").forEach(el => {
-        el.style.display = el.innerText.toLowerCase().includes(q) ? "" : "none";
-    });
+    document.querySelectorAll("#mainGrid .grid-card").forEach(el => { el.style.display = el.innerText.toLowerCase().includes(q) ? "" : "none"; });
 };
 
 // =====================================================
