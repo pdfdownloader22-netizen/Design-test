@@ -112,7 +112,7 @@
     <!-- FLOATING TOAST STACK -->
     <div id="proToastStack" class="fixed top-4 right-4 z-[999999] flex flex-col gap-2 max-w-xs w-full pointer-events-none"></div>
 
-    <!-- MAINTENANCE / BLOCKED LOCK OVERLAY -->
+    <!-- MAINTENANCE / BLOCKED / IP BAN LOCK OVERLAY -->
     <div id="portalLockOverlay" class="fixed inset-0 bg-slate-950/92 backdrop-blur-lg z-[999998] hidden flex items-center justify-center p-5">
         <div class="bg-white rounded-3xl max-w-md w-full p-7 text-center shadow-2xl border-2 border-rose-400 text-slate-900">
             <div id="portalLockIcon" class="text-5xl mb-3">🚧</div>
@@ -127,13 +127,29 @@
         </div>
     </div>
 
+    <!-- PROMO POPUP BANNER MODAL (ADMIN CONTROLLED) -->
+    <div id="promoPopupModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[999990] hidden flex items-center justify-center p-4">
+        <div id="promoPopupContent" class="app-card max-w-sm w-full p-5 rounded-3xl shadow-2xl text-center space-y-3 relative"></div>
+    </div>
+
+    <!-- STUDENT NOTIFICATION BELL INBOX MODAL -->
+    <div id="studentInboxModal" class="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="app-card w-full max-w-md max-h-[82vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+            <div class="p-4 border-b border-sky-200/60 flex items-center justify-between">
+                <h3 class="font-black text-base">🔔 Notifications & Admin Replies</h3>
+                <button onclick="closeStudentInboxModal()" class="text-rose-600 font-black text-lg bg-transparent border-0 cursor-pointer">✕</button>
+            </div>
+            <div id="studentInboxBody" class="p-4 overflow-y-auto space-y-2.5 text-xs">Loading inbox...</div>
+        </div>
+    </div>
+
     <!-- GLOBAL CUSTOM POPUP MODAL CONTAINER -->
     <div id="rwaCustomModalOverlay" class="rwa-modal-overlay">
         <div id="rwaCustomModalCard" class="rwa-modal-card"></div>
     </div>
 
     <!-- =========================================================
-         MINIMALIST COACHING APP TOP BAR (EXACT SLIDE 1 & 10 UI)
+         MINIMALIST COACHING APP TOP BAR (LOGO + SEARCH + BELL + THEME)
          ========================================================= -->
     <nav id="topHeaderNav" class="app-top-bar sticky top-0 z-40 px-4 py-3">
         <div class="max-w-5xl mx-auto flex items-center justify-between gap-3">
@@ -146,6 +162,10 @@
             </div>
 
             <div class="flex items-center gap-2 shrink-0">
+                <button id="inboxBellBtn" onclick="openStudentInboxModal()" class="app-hdr-icon relative" title="Notifications & Replies">
+                    <span>🔔</span>
+                    <span id="inboxUnreadDot" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center">0</span>
+                </button>
                 <button onclick="openGlobalSearchModal()" class="app-hdr-icon" title="Search & Quick Feedback">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35" stroke-linecap="round"/></svg>
                 </button>
@@ -154,7 +174,7 @@
         </div>
     </nav>
 
-    <!-- MAIN CONTENT SHELL (WITH SAFE BOTTOM PADDING FOR FIXED NAV) -->
+    <!-- MAIN CONTENT SHELL -->
     <main class="max-w-5xl w-full mx-auto px-3.5 sm:px-6 pt-3 pb-24 flex-1 relative overflow-x-hidden">
 
         <!-- =========================================================
@@ -165,14 +185,16 @@
             <!-- LIVE ADMIN NOTICE BANNER -->
             <div id="liveNoticeBanner" class="hidden mb-3.5"></div>
 
+            <!-- SCHEDULED WEEKLY LIVE MOCK BANNER (SUNDAY SPECIAL) -->
+            <div id="scheduledMocksBanner" class="hidden mb-3.5"></div>
+
             <!-- ─────────────────────────────────────────────────────
                  TAB 1: TESTS EXPLORER (SLIDE 1 HOME + SLIDE 2 FOLDER/TESTS)
                  ───────────────────────────────────────────────────── -->
             <div id="appViewTests" class="space-y-4">
 
-                <!-- SLIDE 1 HOME BLOCK (AUTO-HIDES WHEN INSIDE A SERIES/FOLDER) -->
+                <!-- SLIDE 1 HOME BLOCK -->
                 <div id="homeSeriesTopBlock" class="space-y-3.5">
-                    <!-- 2x2 Compact Sky-Blue Glass Stat Pills (Exact Slide 1) -->
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                         <div class="home-pill-stat">
                             <span class="home-pill-ico">🏆</span>
@@ -192,13 +214,11 @@
                         </div>
                     </div>
 
-                    <!-- Clean Rounded Search Bar -->
                     <div class="home-search-wrap">
                         <svg class="w-4 h-4 opacity-55 shrink-0" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35" stroke-linecap="round"/></svg>
                         <input type="text" id="searchBox" oninput="filterGrid()" placeholder="Search test series or exam..." class="home-search-input">
                     </div>
 
-                    <!-- Exam Category Filter Pills (All, SSC, Police, Railway, Defense, UP) -->
                     <div id="seriesCategoryBar" class="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                         <button onclick="applySeriesCategory('all', this)" class="cat-pill active">All</button>
                         <button onclick="applySeriesCategory('ssc', this)" class="cat-pill">SSC</button>
@@ -209,7 +229,6 @@
                         <button onclick="applySeriesCategory('bank', this)" class="cat-pill">Banking</button>
                     </div>
 
-                    <!-- Section Title Strip -->
                     <div class="flex items-center justify-between gap-2 pt-0.5 px-0.5">
                         <div class="flex items-center gap-2 min-w-0">
                             <h2 class="text-lg sm:text-xl font-black tracking-tight truncate">All Paid Test Series</h2>
@@ -219,7 +238,7 @@
                     </div>
                 </div>
 
-                <!-- SLIDE 2 INNER HEADER (VISIBLE WHEN INSIDE FOLDERS OR TEST LIST) -->
+                <!-- SLIDE 2 INNER HEADER -->
                 <div id="innerExplorerHeader" class="hidden space-y-3">
                     <div class="flex items-center justify-between gap-2">
                         <div class="flex items-center gap-2.5 min-w-0 flex-1">
@@ -232,13 +251,11 @@
                         <button onclick="forceSyncCurrentExplorer()" class="sync-pill-btn shrink-0">🔄 Sync</button>
                     </div>
 
-                    <!-- Inner Search Bar -->
                     <div class="home-search-wrap">
                         <svg class="w-4 h-4 opacity-55 shrink-0" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35" stroke-linecap="round"/></svg>
                         <input type="text" id="innerSearchBox" oninput="filterGrid(this.value)" placeholder="Search mock test or folder..." class="home-search-input">
                     </div>
 
-                    <!-- Slide 2 Smart Test Filter Pills -->
                     <div id="testFilterChipsBar" class="hidden flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                         <button onclick="applyTestListFilter('all', this)" class="cat-pill active">All Tests</button>
                         <button onclick="applyTestListFilter('unattempted', this)" class="cat-pill">Unattempted</button>
@@ -248,15 +265,13 @@
                     </div>
                 </div>
 
-                <!-- SERIES / FOLDERS / TESTS GRID -->
                 <div id="mainGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
             </div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 2: MY PROGRESS & ANALYTICS (EXACT SLIDE 3 UI)
+                 TAB 2: MY PROGRESS, STRENGTH METER & TREND (SLIDE 3)
                  ───────────────────────────────────────────────────── -->
             <div id="appViewDashboard" class="hidden space-y-4">
-                <!-- Circular Progress Ring + 3 Stat Pills -->
                 <div class="app-card p-5">
                     <div class="flex items-center justify-between gap-4">
                         <div class="progress-ring-shell" id="dashProgressRing">
@@ -266,24 +281,21 @@
                             </div>
                         </div>
                         <div class="flex-1 space-y-2 min-w-0">
-                            <div class="prog-stat-pill">
-                                <span>📝</span>
-                                <span><strong id="dashAttemptedTests">0</strong> Attempted</span>
-                            </div>
-                            <div class="prog-stat-pill">
-                                <span>🎯</span>
-                                <span><strong id="dashAvgAccuracy">0%</strong> Avg Accuracy</span>
-                            </div>
-                            <div class="prog-stat-pill">
-                                <span>🔥</span>
-                                <span><strong id="dashProgressStreak">1 Day</strong> Streak</span>
-                            </div>
+                            <div class="prog-stat-pill"><span>📝</span><span><strong id="dashAttemptedTests">0</strong> Attempted</span></div>
+                            <div class="prog-stat-pill"><span>🎯</span><span><strong id="dashAvgAccuracy">0%</strong> Avg Accuracy</span></div>
+                            <div class="prog-stat-pill"><span>🔥</span><span><strong id="dashProgressStreak">1 Day</strong> Streak</span></div>
                         </div>
                     </div>
                     <p id="dashProgressSubtext" class="text-xs font-bold opacity-70 mt-3.5 text-center">Abhi tak aapne 0 tests attempt kiye hain.</p>
                 </div>
 
-                <!-- Last 10 Tests Performance Trend Bar Chart -->
+                <!-- SUBJECT-WISE STRENGTH & WEAKNESS METER -->
+                <div id="subjectStrengthCard" class="app-card p-5 hidden">
+                    <h3 class="text-base font-black mb-3">💪 Subject-Wise Strength & Weakness Meter</h3>
+                    <div id="subjectStrengthBars" class="space-y-3 text-xs"></div>
+                </div>
+
+                <!-- LAST 10 TESTS TREND BAR CHART -->
                 <div id="progressTrendCard" class="app-card p-5">
                     <h3 class="text-base font-black mb-3">Last 10 Tests Performance Trend</h3>
                     <div id="progressTrendBars" class="flex items-end gap-2.5 h-36 pt-2 overflow-x-auto no-scrollbar"></div>
@@ -293,7 +305,7 @@
                     </div>
                 </div>
 
-                <!-- Recently Attempted Tests -->
+                <!-- RECENTLY ATTEMPTED TESTS -->
                 <div class="app-card p-5">
                     <div class="flex justify-between items-center mb-3.5">
                         <h3 class="text-base font-black">Recently Attempted Tests</h3>
@@ -304,7 +316,7 @@
             </div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 3: SAVED BOOKMARKS VAULT (EXACT SLIDE 4 UI)
+                 TAB 3: SAVED BOOKMARKS VAULT (SLIDE 4)
                  ───────────────────────────────────────────────────── -->
             <div id="appViewBookmarks" class="hidden space-y-4">
                 <div id="bookmarksListSubView" class="space-y-3.5">
@@ -315,16 +327,12 @@
                             <button onclick="clearAllBookmarks()" class="w-8 h-8 rounded-full bg-rose-100 text-rose-600 font-black text-xs border-0 cursor-pointer" title="Clear All Bookmarks">🗑</button>
                         </div>
                     </div>
-
-                    <!-- Dynamic Subject Filter Pills -->
                     <div id="bookmarkSubjectFilterBar" class="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                         <button onclick="filterBookmarksBySubject('all', this)" class="cat-pill active">All</button>
                     </div>
-
                     <div id="bookmarksListContainer" class="space-y-3.5"></div>
                 </div>
 
-                <!-- Single Bookmark Detail View -->
                 <div id="bookmarkDetailSubView" class="hidden">
                     <div class="app-card p-5 space-y-4">
                         <div class="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-sky-200/60">
@@ -350,19 +358,16 @@
             </div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 4: PRO STUDY VAULT HUB (EXACT SLIDES 5, 15, 16)
+                 TAB 4: PRO STUDY VAULT HUB (SLIDES 5, 15, 16 + CA CAPSULES)
                  ───────────────────────────────────────────────────── -->
             <div id="appViewProTools" class="hidden space-y-4">
-                <!-- Vault Grid Home (Slide 5) -->
                 <div id="vaultHubSubView" class="space-y-4">
-                    <!-- Vibrant Rapid Quiz Hero Banner -->
                     <div class="rapid-quiz-banner p-5 rounded-3xl text-center text-white shadow-lg">
                         <div class="text-xl sm:text-2xl font-black tracking-tight">Daily 5-Min Rapid Quiz ⚡</div>
                         <p class="text-xs font-bold opacity-90 mt-1">Rozana 5 sawal solve karein aur apni study streak active rakhein</p>
                         <button onclick="openVaultToolDetail('rapid_quiz')" class="mt-3.5 px-7 py-2.5 rounded-full bg-white text-orange-600 font-black text-sm border-0 shadow-md cursor-pointer active:scale-95 transition">Start Quiz ⚡</button>
                     </div>
 
-                    <!-- 2-Column Tool Grid (Exact Slide 5) -->
                     <div class="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
                         <div onclick="openVaultToolDetail('mistakes')" class="vault-tool-card">
                             <div class="vault-tool-ico bg-rose-100 text-rose-600">📕</div>
@@ -376,10 +381,16 @@
                             <span class="mt-1.5 text-[11px] font-bold opacity-65">Mix Qs & Timer</span>
                         </div>
 
+                        <div onclick="openVaultToolDetail('ca_capsules')" class="vault-tool-card">
+                            <div class="vault-tool-ico bg-blue-100 text-blue-600">📰</div>
+                            <div class="font-black text-sm mt-2.5">Current Affairs & GK</div>
+                            <span class="mt-1.5 px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black">Daily Capsules</span>
+                        </div>
+
                         <div onclick="openVaultToolDetail('flashcards')" class="vault-tool-card">
                             <div class="vault-tool-ico bg-teal-100 text-teal-600">🃏</div>
                             <div class="font-black text-sm mt-2.5">3D Flashcards</div>
-                            <span id="vaultFlashcardBadge" class="mt-1.5 px-2.5 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[10px] font-black">1 Card</span>
+                            <span id="vaultFlashcardBadge" class="mt-1.5 px-2.5 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[10px] font-black">2 Cards</span>
                         </div>
 
                         <div onclick="openVaultToolDetail('pomodoro')" class="vault-tool-card">
@@ -394,15 +405,18 @@
                             <span id="vaultPlannerBadge" class="mt-1.5 text-[11px] font-bold opacity-65">0 Tasks</span>
                         </div>
 
-                        <div onclick="openCountdownModal()" class="vault-tool-card">
-                            <div class="vault-tool-ico bg-orange-100 text-orange-600">🎯</div>
-                            <div class="font-black text-sm mt-2.5">Target Exam Countdown</div>
-                            <span id="vaultCountdownSub" class="mt-1.5 text-[11px] font-bold text-indigo-600 dark:text-sky-400 truncate max-w-full">SSC GD 2027</span>
+                        <div onclick="openCountdownModal()" class="vault-tool-card col-span-2 sm:col-span-3">
+                            <div class="flex items-center gap-3">
+                                <div class="vault-tool-ico bg-orange-100 text-orange-600">🎯</div>
+                                <div class="text-left">
+                                    <div class="font-black text-sm">Target Exam Countdown</div>
+                                    <div id="vaultCountdownSub" class="text-xs font-bold text-indigo-600 dark:text-sky-400">SSC GD 2027</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Vault Tool Detail Sub-Screen (Slides 15 & 16) -->
                 <div id="vaultToolDetailSubView" class="hidden space-y-3.5">
                     <div class="flex items-center justify-between gap-2">
                         <div class="flex items-center gap-2.5 min-w-0">
@@ -416,7 +430,7 @@
             </div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 5: FULL-SCREEN STUDENT PROFILE (EXACT SLIDE 6 UI)
+                 TAB 5: FULL-SCREEN STUDENT PROFILE (SLIDE 6)
                  ───────────────────────────────────────────────────── -->
             <div id="appViewProfile" class="hidden space-y-4">
                 <div id="profileTabContent" class="space-y-4"></div>
@@ -425,7 +439,7 @@
         </section>
 
         <!-- =========================================================
-             SLIDE 2: FULL-SCREEN TCS CBT MOCK TEST ENGINE (SLIDES 7, 8, 9, 11, 12, 14, 18)
+             SLIDE 2: FULL-SCREEN TCS CBT MOCK TEST ENGINE
              ========================================================= -->
         <section id="slideTestAttempt" class="slide-page hidden-slide">
             <div id="tcs-app-wrapper" class="tcs-fullscreen-shell">
@@ -450,7 +464,7 @@
                     </div>
                 </div>
 
-                <!-- STEP 2: LIVE CBT TEST SCREEN (SLIDE 8 & SLIDE 14 NIGHT MODE) -->
+                <!-- STEP 2: LIVE CBT TEST SCREEN (SLIDE 8 & 14) -->
                 <div id="live-test-screen" class="tcs-step-page tcs-hidden">
                     <div class="tcs-header">
                         <div class="flex items-center gap-2 min-w-0">
@@ -478,7 +492,10 @@
                             <span class="tcs-m-pos" id="tcs-live-pos">+2</span>
                             <span class="tcs-m-neg" id="tcs-live-neg">-0.5</span>
                         </div>
-                        <button id="tcs-bookmark-btn" onclick="toggleCurrentQuestionBookmark()" class="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-xs cursor-pointer">☆ Save</button>
+                        <div class="flex items-center gap-1.5">
+                            <button onclick="flagCurrentLiveQuestion()" class="px-2 py-1 rounded-lg bg-rose-100 text-rose-700 border border-rose-300 font-extrabold text-xs cursor-pointer" title="Report Question Error">🚩</button>
+                            <button id="tcs-bookmark-btn" onclick="toggleCurrentQuestionBookmark()" class="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-xs cursor-pointer">☆ Save</button>
+                        </div>
                     </div>
 
                     <div class="tcs-question-area" id="tcs-question-scroll-box">
@@ -502,7 +519,7 @@
                         </div>
                     </div>
 
-                    <!-- Slide-Over Question Palette Drawer (Supports Night Mode - Slide 14!) -->
+                    <!-- Slide-Over Question Palette Drawer -->
                     <div class="tcs-drawer-overlay" id="tcs-palette" onclick="if(event.target === this) toggleTcsPalette()">
                         <div class="tcs-drawer">
                             <div class="tcs-dr-header">
@@ -537,21 +554,21 @@
                     </div>
                 </div>
 
-                <!-- STEP 4: DEEP ANALYSIS, LEADERBOARD & TIME-TRAP (SLIDE 9) -->
+                <!-- STEP 4: DEEP ANALYSIS, CUT-OFF PREDICTOR, LEADERBOARD & SHARE PNG (SLIDE 9) -->
                 <div id="analysis-screen" class="tcs-step-page tcs-hidden">
                     <div class="analysis-header">
                         <button onclick="exitCbtTest()" class="px-3 py-1.5 rounded-lg bg-white/15 text-white font-bold text-xs border-0 cursor-pointer">← Exit</button>
-                        <h1 class="text-base font-black m-0">Test Analysis & Rank</h1>
+                        <h1 class="text-sm sm:text-base font-black m-0">Analysis & Rank</h1>
                         <div class="flex items-center gap-1.5">
+                            <button onclick="shareScorecardPng()" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-xs border-0 cursor-pointer" title="Download/Share PNG">📸 Share</button>
                             <button onclick="exportTestPdfSheet()" class="px-2.5 py-1.5 rounded-lg bg-white/15 text-white font-bold text-xs border border-white/25 cursor-pointer">📄 PDF</button>
-                            <button onclick="reAttemptCbtTest()" class="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white font-bold text-xs border-0 cursor-pointer">🔄 Retry</button>
+                            <button onclick="reAttemptCbtTest()" class="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white font-bold text-xs border-0 cursor-pointer">🔄</button>
                         </div>
                     </div>
 
                     <div class="tcs-page-inner pb-8">
                         <div id="dynamic-remark" class="remark-banner" style="display:none;"></div>
 
-                        <!-- Slide 9 Pastel 2x2 Hero Scorecard -->
                         <div class="a-card">
                             <h2 class="text-base font-black text-slate-900 mb-3">Your Scorecard</h2>
                             <div class="grid grid-cols-2 gap-2.5 mb-3">
@@ -579,7 +596,13 @@
                             </div>
                         </div>
 
-                        <!-- Real All-India Top-10 Leaderboard -->
+                        <!-- CATEGORY-WISE CUT-OFF & SELECTION PREDICTOR -->
+                        <div class="a-card" id="tcsCutoffCard">
+                            <h2 class="text-base font-black text-slate-900 mb-2">🎯 Category Cut-Off & Selection Predictor</h2>
+                            <div id="tcsCutoffBody" class="text-xs space-y-2"></div>
+                        </div>
+
+                        <!-- REAL ALL-INDIA TOP-10 LEADERBOARD -->
                         <div class="a-card" id="tcsLeaderboardCard">
                             <div class="flex justify-between items-center mb-3">
                                 <h2 class="text-base font-black text-slate-900">All-India Top-10 Leaderboard</h2>
@@ -588,13 +611,12 @@
                             <div id="tcsLeaderboardBody" class="space-y-1.5 text-xs">Loading live ranks...</div>
                         </div>
 
-                        <!-- Time-Trap & Guesswork Detector -->
+                        <!-- TIME-TRAP & GUESSWORK DETECTOR -->
                         <div class="a-card" id="tcsTimeTrapCard">
                             <h2 class="text-base font-black text-slate-900 mb-2.5">Time-Trap & Guesswork Detector</h2>
                             <div id="tcsTimeTrapList" class="space-y-2 text-xs"></div>
                         </div>
 
-                        <!-- Comparison Table -->
                         <div class="a-card">
                             <h2 class="text-base font-black text-center mb-3">Comparison</h2>
                             <table class="comp-table">
@@ -608,7 +630,6 @@
                             </table>
                         </div>
 
-                        <!-- Donut & Time Stats -->
                         <div class="a-card">
                             <div class="donut-container"><div class="donut-chart" id="res-donut"><div class="donut-inner"></div></div></div>
                             <div class="chart-legend">
@@ -654,9 +675,7 @@
                         <button class="flt-btn" onclick="filterSol('incorrect', this)">Incorrect</button>
                         <button class="flt-btn" onclick="filterSol('unattempted', this)">Unattempted</button>
                     </div>
-                    <div class="tcs-page-inner">
-                        <div class="sol-container" id="sol-list-container"></div>
-                    </div>
+                    <div class="tcs-page-inner"><div class="sol-container" id="sol-list-container"></div></div>
                 </div>
 
                 <!-- STEP 6: INDIVIDUAL QUESTION FULL SOLUTION (SLIDE 12) -->
@@ -672,6 +691,7 @@
                             <div class="flex items-center gap-1.5 flex-wrap">
                                 <div id="fs-q-time-compare"></div>
                                 <button id="fs-bookmark-btn" onclick="toggleSolutionQuestionBookmark()" class="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-xs cursor-pointer">☆ Save</button>
+                                <button onclick="flagFullSolQuestion()" class="px-2 py-1 rounded-lg bg-rose-100 text-rose-700 border border-rose-300 font-extrabold text-xs cursor-pointer" title="Report Question Mistake">🚩</button>
                                 <button onclick="makeFlashcardFromFullSol()" class="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-300 font-extrabold text-xs cursor-pointer" title="Save as Flashcard">🃏</button>
                                 <button onclick="copyCurrentQuestionDoubt()" class="px-2 py-1 rounded-lg bg-sky-100 text-sky-900 border border-sky-300 font-extrabold text-xs cursor-pointer" title="Copy Question">📋</button>
                             </div>
@@ -696,9 +716,7 @@
             </div>
         </section>
 
-        <!-- =========================================================
-             SLIDE 3: FULL-SCREEN BORDERLESS PDF VIEWER (SLIDE 13)
-             ========================================================= -->
+        <!-- SLIDE 3: FULL-SCREEN BORDERLESS PDF VIEWER (SLIDE 13) -->
         <section id="slidePdf" class="slide-page hidden-slide">
             <div class="pdf-floating-bar">
                 <button onclick="closePdfSlide()" class="pdf-floating-close-btn">✕ Close</button>
@@ -709,49 +727,31 @@
 
     </main>
 
-    <!-- =========================================================
-         NATIVE COACHING APP FIXED 5-TAB BOTTOM NAVIGATION BAR
-         ========================================================= -->
+    <!-- NATIVE COACHING APP FIXED 5-TAB BOTTOM NAVIGATION BAR -->
     <nav id="appBottomNav" class="app-bottom-nav">
         <button onclick="switchAppTab('tests')" data-apptab="tests" class="bnav-item active">
-            <span class="bnav-pill-bg">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h4" stroke-linecap="round"/></svg>
-            </span>
+            <span class="bnav-pill-bg"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h4" stroke-linecap="round"/></svg></span>
             <span class="bnav-label">Tests</span>
         </button>
-
         <button onclick="switchAppTab('progress')" data-apptab="progress" class="bnav-item">
-            <span class="bnav-pill-bg">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M5 20v-6M12 20V8M19 20V4" stroke-linecap="round"/></svg>
-            </span>
+            <span class="bnav-pill-bg"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M5 20v-6M12 20V8M19 20V4" stroke-linecap="round"/></svg></span>
             <span class="bnav-label">Progress</span>
         </button>
-
         <button onclick="switchAppTab('bookmarks')" data-apptab="bookmarks" class="bnav-item">
-            <span class="bnav-pill-bg">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 4h12a1 1 0 011 1v16l-7-4-7 4V5a1 1 0 011-1z" stroke-linejoin="round"/></svg>
-            </span>
+            <span class="bnav-pill-bg"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M6 4h12a1 1 0 011 1v16l-7-4-7 4V5a1 1 0 011-1z" stroke-linejoin="round"/></svg></span>
             <span class="bnav-label">Saved</span>
         </button>
-
         <button onclick="switchAppTab('protools')" data-apptab="protools" class="bnav-item">
-            <span class="bnav-pill-bg">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/><path d="M12 11v4M10 13h4" stroke-linecap="round"/></svg>
-            </span>
+            <span class="bnav-pill-bg"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/><path d="M12 11v4M10 13h4" stroke-linecap="round"/></svg></span>
             <span class="bnav-label">Vault</span>
         </button>
-
         <button onclick="switchAppTab('profile')" data-apptab="profile" class="bnav-item">
-            <span class="bnav-pill-bg">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" stroke-linecap="round"/></svg>
-            </span>
+            <span class="bnav-pill-bg"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" stroke-linecap="round"/></svg></span>
             <span class="bnav-label">Profile</span>
         </button>
     </nav>
 
-    <!-- =========================================================
-         SMART GLOBAL SEARCH & QUICK REPORT SCREEN (EXACT SLIDE 17)
-         ========================================================= -->
+    <!-- SMART GLOBAL SEARCH & QUICK REPORT SCREEN (SLIDE 17) -->
     <div id="globalSearchModal" class="fixed inset-0 z-50 hidden flex flex-col search-screen-shell">
         <div class="p-3.5 border-b border-sky-200/60 flex items-center gap-2.5 max-w-2xl w-full mx-auto">
             <button onclick="closeGlobalSearchModal()" class="inner-back-btn">❮</button>
@@ -767,8 +767,6 @@
                 <h3 class="font-black text-base mb-2.5">Search Results</h3>
                 <div id="globalSearchResults" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs"></div>
             </div>
-
-            <!-- Quick Report Issue / Request Test Section (Slide 17) -->
             <div id="quickFeedbackBox">
                 <h3 class="font-black text-base mb-2.5">Quick Feedback</h3>
                 <div class="app-card p-4 space-y-3">
@@ -795,21 +793,13 @@
                 <h3 class="font-black text-base">🎯 Set Target Exam Countdown</h3>
                 <button onclick="closeCountdownModal()" class="text-slate-400 font-black text-lg bg-transparent border-0 cursor-pointer">✕</button>
             </div>
-            <div>
-                <label class="text-xs font-extrabold opacity-75">Target Exam Name</label>
-                <input id="cdExamName" type="text" placeholder="e.g. SSC GD 2027" class="app-form-input mt-1">
-            </div>
-            <div>
-                <label class="text-xs font-extrabold opacity-75">Exam Date</label>
-                <input id="cdExamDate" type="date" class="app-form-input mt-1">
-            </div>
+            <div><label class="text-xs font-extrabold opacity-75">Target Exam Name</label><input id="cdExamName" type="text" placeholder="e.g. SSC GD 2027" class="app-form-input mt-1"></div>
+            <div><label class="text-xs font-extrabold opacity-75">Exam Date</label><input id="cdExamDate" type="date" class="app-form-input mt-1"></div>
             <button onclick="saveExamCountdown()" class="btn-watch w-full py-2.5 text-xs">💾 Save Target</button>
         </div>
     </div>
 
-    <!-- =================================================================
-         ORIGINAL 2-SLIDE PURPLE OTP LOGIN MODAL (100% UNCHANGED)
-         ================================================================= -->
+    <!-- ORIGINAL 2-SLIDE PURPLE OTP LOGIN MODAL (100% UNCHANGED) -->
     <div id="loginModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-3.5 hidden">
         <div class="rwa-auth-card max-w-[390px] w-full animate-slideInSmooth">
             <button id="otpBackArrowBtn" type="button" onclick="resetOtpModalToPhoneStep()" class="hidden absolute top-4 left-4 z-20 w-9 h-9 rounded-full bg-white shadow-md border border-purple-100 flex items-center justify-center text-slate-800 font-black text-base cursor-pointer hover:bg-purple-50" title="Back">←</button>
@@ -904,23 +894,23 @@
         </div>
     </div>
 
-    <!-- DYNAMIC CACHE-BUSTING SCRIPT LOADER -->
+    <!-- DYNAMIC CACHE-BUSTING SCRIPT LOADER (SECURITY -> PRO SUITE -> APP -> TCS ENGINE) -->
     <script>
         (function loadFreshScripts() {
             const bust = "v=" + Date.now();
-            const s0 = document.createElement("script");
-            s0.src = "pro-ts-suite.js?" + bust;
-            s0.onload = function() {
-                const s1 = document.createElement("script");
-                s1.src = "app.js?" + bust;
-                s1.onload = function() {
-                    const s2 = document.createElement("script");
-                    s2.src = "tcs-engine.js?" + bust;
-                    document.body.appendChild(s2);
-                };
-                document.body.appendChild(s1);
+            const load = (src, cb) => {
+                const s = document.createElement("script");
+                s.src = src + "?" + bust;
+                if (cb) s.onload = cb;
+                document.body.appendChild(s);
             };
-            document.body.appendChild(s0);
+            load("rwa-security.js", () => {
+                load("pro-ts-suite.js", () => {
+                    load("app.js", () => {
+                        load("tcs-engine.js");
+                    });
+                });
+            });
         })();
     </script>
 </body>
