@@ -1,8 +1,9 @@
 // =========================================================
-// RWA PAID TEST SERIES APP - MASTER ENGINE & CLOUD VAULT (app.js)
-// Features: Auto-Save Cloud Vault (Zero Duplicates), Deleted-Series
-// Cloud Fallback, 1-v-1 Challenge Detector, Bookmark Personal Notes,
-// Expired Token Guard, Clean Logout, Dual-DB E2E Sync & VIP Profile
+// RWA PAID TEST SERIES APP - MASTER ENGINE (app.js)
+// Features: Read-Only Cloud Vault Fallback (Zero Student Writes),
+// Deleted-Series Live Recovery, 1-v-1 Challenge Detector,
+// Bookmark Personal Notes, Expired Token Guard, Clean Logout,
+// Dual-DB E2E Sync, Permanent IDB Storage & VIP Profile
 // =========================================================
 
 const BOT_API_BASE = "https://rwaweb-hp11.onrender.com";            // OLD DB (100% UNCHANGED)
@@ -1112,7 +1113,8 @@ function handleLogout() {
 window.handleLogout = handleLogout;
 
 // =====================================================
-// GLOBAL STATE & CLOUD VAULT SYNC HELPERS
+// GLOBAL STATE & READ-ONLY CLOUD VAULT FALLBACK HELPERS
+// (Vault Writes ONLY happen via Nightly 11PM-12AM Auto-Scanner or Admin Panel)
 // =====================================================
 window.state = {
     currentSlide: "slideExplorer", previousSlide: "slideExplorer", activeAppTab: "tests", view: "ts_list",
@@ -1130,34 +1132,6 @@ const DB = {
     ],
     tsSubjects: {}, tsTitles: {}
 };
-
-// Cloud Content Vault Background Sync (Zero Duplicates)
-function vaultSyncSeriesBg(seriesArr) {
-    if (!Array.isArray(seriesArr) || !seriesArr.length || typeof window.rwaSecureFetch !== "function") return;
-    window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/sync_series`, {
-        method: "POST",
-        body: { series: seriesArr.slice(0, 80) },
-        keepalive: true
-    }).catch(() => {});
-}
-
-function vaultSyncFoldersBg(seriesId, foldersArr) {
-    if (!seriesId || !Array.isArray(foldersArr) || !foldersArr.length || typeof window.rwaSecureFetch !== "function") return;
-    window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/sync_folders`, {
-        method: "POST",
-        body: { series_id: String(seriesId), folders: foldersArr.slice(0, 60) },
-        keepalive: true
-    }).catch(() => {});
-}
-
-function vaultSyncTitlesBg(seriesId, subjectId, testsArr) {
-    if (!seriesId || !Array.isArray(testsArr) || !testsArr.length || typeof window.rwaSecureFetch !== "function") return;
-    window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/sync_titles`, {
-        method: "POST",
-        body: { series_id: String(seriesId), subject_id: String(subjectId || "-1"), tests: testsArr.slice(0, 150) },
-        keepalive: true
-    }).catch(() => {});
-}
 
 async function fetchVaultSeriesFallback() {
     if (typeof window.rwaSecureFetch !== "function") return [];
@@ -1278,7 +1252,7 @@ async function fetchAPIWithToken(endpoint, tokenObj, fallbackGetter) {
 }
 
 // =====================================================
-// EXPLORER VIEWS (LIVE + CLOUD VAULT MERGE — DELETED SERIES STAY LIVE!)
+// EXPLORER VIEWS (LIVE + READ-ONLY CLOUD VAULT MERGE — DELETED SERIES STAY LIVE!)
 // =====================================================
 function matchesSeriesCategory(title, cat) {
     if (!cat || cat === "all") return true;
@@ -1380,10 +1354,8 @@ async function openTestSeriesExplorer(mode = "paid_ts", forceRefresh = false) {
     ]);
 
     const liveCombined = [...(Array.isArray(p0) ? p0 : []), ...(Array.isArray(p10) ? p10 : []), ...(Array.isArray(p20) ? p20 : [])];
-    // Auto-save newly discovered live series to Cloud Vault (zero duplicates!)
-    if (liveCombined.length > 0) vaultSyncSeriesBg(liveCombined);
 
-    // Merge Vault series so even if upstream deletes a series, it remains LIVE directly from Cloud Vault!
+    // Merge Vault series so even if upstream deletes a series, it stays LIVE directly from Cloud Vault!
     const liveIds = new Set(liveCombined.map(x => String(x && x.id || "")));
     const vaultOnly = (Array.isArray(vaultSeries) ? vaultSeries : [])
         .filter(vs => vs && !liveIds.has(String(vs.series_id || vs.id || "")))
@@ -1416,8 +1388,6 @@ async function openTestSeriesSubjects(tsId, tsTitle) {
         fetchAPIWithToken(`/get/testseries_subjects?testseries_id=${tsId}`, useTok, () => DB.tsSubjects[tsId] || []),
         fetchVaultFoldersFallback(tsId)
     ]);
-
-    if (Array.isArray(liveSubs) && liveSubs.length > 0) vaultSyncFoldersBg(tsId, liveSubs);
 
     // Merge live + vault folders (zero duplicates)
     const seenSub = new Set(), subs = [];
@@ -1477,8 +1447,6 @@ async function openTestSeriesTitles(tsId, subId, subName) {
     if ((!liveList || liveList.length === 0) && String(subId) !== "-1") {
         liveList = await fetchAPIWithToken(`/get/test_titlev2?testseriesid=${tsId}&subject_id=${subId}&userid=${uid}&search=&start=-1`, useTok, () => []);
     }
-
-    if (Array.isArray(liveList) && liveList.length > 0) vaultSyncTitlesBg(tsId, subId, liveList);
 
     // Merge live + cloud vault tests (deleted upstream tests stay live from Cloud Vault!)
     const seenT = new Set(), mergedList = [];
