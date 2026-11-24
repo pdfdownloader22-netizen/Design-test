@@ -1,12 +1,18 @@
 // =========================================================
-// RWA PAID TEST SERIES - PRO DYNAMIC TCS CBT ENGINE (tcs-engine.js)
-// E2E ENCRYPTED 4-DB LEADERBOARD + CUT-OFF PREDICTOR + SHARE PNG +
-// QUESTION MISTAKE FLAG + ALL ORIGINAL WORKER/MATH/LOCK FEATURES
+// RWA PAID TEST SERIES - ULTRA PRO TCS CBT ENGINE (tcs-engine.js)
+// Features: Cloud Vault Auto-Save & Zero-502 Fallback, Local IDB
+// Edge Cache, Multi-Worker Failover, Strict Real-Exam Mode,
+// 4-Colour Time-Heatmap, Section Spline Waveform, 1-v-1 Challenge,
+// Offline-Safe Submit Queue & Branded Scorecard PNG
 // =========================================================
 
 let NEXT_BUILD_ID = localStorage.getItem("rwa_next_build_id") || "TDvVxPHlB8LGPavKJeaEV";
-const RWA_TERMS_WORKER = "https://test.src22420.workers.dev/?url=";
+const RWA_TERMS_WORKERS = [
+    "https://test.src22420.workers.dev/?url=",
+    "https://proplayer.allswbatch22.workers.dev/proxy?url="
+];
 const PAUSED_TESTS_STORAGE_KEY = "rwa_paused_tests_v1";
+const _workerDownUntil = {};
 
 (function injectExactTcsStyles() {
     if (document.getElementById("tcs-exact-fix-styles")) return;
@@ -26,7 +32,6 @@ const PAUSED_TESTS_STORAGE_KEY = "rwa_paused_tests_v1";
         .tcs-sub-pill { background: rgba(255,255,255,0.85) !important; color: #1e293b !important; font-size: 12px !important; font-weight: 800 !important; padding: 4px 11px !important; border-radius: 14px !important; white-space: nowrap !important; flex-shrink: 0 !important; }
         .tcs-opt-heading { font-size: 14px !important; font-weight: 900 !important; color: #0f172a !important; margin: 10px 0 4px 0 !important; }
 
-        /* INLINE MATH, NUMBERS & QUESTION TEXT FIX */
         .tcs-q-text, .sol-q-txt, .fs-q-txt, .fs-exp-text { font-size: 16.5px; line-height: 1.7 !important; color: #0f172a; font-weight: 600 !important; word-break: break-word !important; }
         .tcs-q-para { margin: 0 0 10px 0 !important; padding: 0 !important; display: block !important; line-height: 1.7 !important; }
         .tcs-q-para:last-child { margin-bottom: 0 !important; }
@@ -61,6 +66,8 @@ let tcsState = {
     testMeta: null,
     pagePropsMeta: null,
     isCustomMode: false,
+    strictMode: false,
+    fiveMinWarned: false,
     rawAllQuestions: [],
     allParsedSections: [],
     selectedOptionalByGroup: {},
@@ -84,6 +91,7 @@ let tcsState = {
     lastSubmittedScore: 0,
     lastMaxMarks: 0,
     lastAccuracy: 0,
+    lastTotalSpentSec: 0,
     lastRankStr: "--",
     lastPercStr: "--",
     lastCounts: { correct: 0, incorrect: 0, unattempted: 0 },
@@ -96,8 +104,24 @@ function stripPlainText(html) {
     return String(html).replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim();
 }
 
+function playSubtleBeep() {
+    try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = 880;
+        gain.gain.value = 0.12;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        setTimeout(() => { try { osc.stop(); ctx.close(); } catch {} }, 280);
+    } catch {}
+}
+
 // =========================================================
-// SMART QUESTION, MATH & OPTION HTML NORMALIZER (100% ORIGINAL)
+// SMART QUESTION, MATH & OPTION HTML NORMALIZER
 // =========================================================
 function cleanQuestionHtml(rawHtml, isOption = false) {
     if (!rawHtml) return "";
@@ -272,7 +296,7 @@ window.saveAndExitForResume = function() {
 window.discardAndCloseTest = function() { clearPausedTestState(); window.closeTcsActionModal(); window.exitCbtTest(); };
 
 // =========================================================
-// DYNAMIC USER AUTH & DEDICATED WORKER
+// MULTI-WORKER FAILOVER + CLOUD CONTENT VAULT + LOCAL IDB EDGE CACHE
 // =========================================================
 function getLoggedInUserAuthDetails() {
     let tokObj = (tcsState.testMeta && tcsState.testMeta.tokenObj) || (window.state && window.state.activeTokenObj) || (Array.isArray(window.USER_TOKENS) && window.USER_TOKENS[0]) || null;
@@ -292,33 +316,112 @@ function getLoggedInUserAuthDetails() {
     return { token, userId, baseUrl: normalizedBaseUrl, cookieString: cookieParts.join("; ") };
 }
 
-async function fetchOnlyRwaTermsViaDedicatedWorker(targetUrl) {
-    try {
-        const u = getLoggedInUserAuthDetails();
-        const workerUrl = `${RWA_TERMS_WORKER}${encodeURIComponent(targetUrl)}&cookie=${encodeURIComponent(u.cookieString)}&token=${encodeURIComponent(u.token)}&uid=${encodeURIComponent(u.userId)}&base_url=${encodeURIComponent(u.baseUrl)}`;
-        const res = await fetch(workerUrl);
-        if (!res.ok) return null;
-        const json = await res.json();
-        if (json && json.buildId && json.buildId !== NEXT_BUILD_ID) { NEXT_BUILD_ID = json.buildId; localStorage.setItem("rwa_next_build_id", NEXT_BUILD_ID); }
-        return json;
-    } catch { return null; }
+async function fetchTermsViaMultiWorker(targetUrl) {
+    const u = getLoggedInUserAuthDetails();
+    for (const workerBase of RWA_TERMS_WORKERS) {
+        if (Date.now() < (_workerDownUntil[workerBase] || 0)) continue;
+        try {
+            const isPrimary = workerBase.includes("test.src22420");
+            const workerUrl = isPrimary
+                ? `${workerBase}${encodeURIComponent(targetUrl)}&cookie=${encodeURIComponent(u.cookieString)}&token=${encodeURIComponent(u.token)}&uid=${encodeURIComponent(u.userId)}&base_url=${encodeURIComponent(u.baseUrl)}`
+                : `${workerBase}${encodeURIComponent(targetUrl)}`;
+
+            const res = await fetch(workerUrl);
+            if (res.status >= 500) {
+                // 2-min cooldown on 502/503 to prevent repeated 502 spam
+                _workerDownUntil[workerBase] = Date.now() + 120000;
+                continue;
+            }
+            if (!res.ok) continue;
+            const json = await res.json();
+            if (json && json.buildId && json.buildId !== NEXT_BUILD_ID) {
+                NEXT_BUILD_ID = json.buildId;
+                localStorage.setItem("rwa_next_build_id", NEXT_BUILD_ID);
+            }
+            if (json && json.pageProps) return json;
+        } catch {
+            _workerDownUntil[workerBase] = Date.now() + 120000;
+        }
+    }
+    return null;
 }
 
 async function fetchRwaNextTermsData(t) {
     const testId = t.id; if (!testId) return null;
     const uniqueSeriesIds = [...new Set([t.seriesId, t.test_series_id, window.state && window.state.activeSeriesId].filter(Boolean).map(s => String(s).trim()))];
     for (const tsId of uniqueSeriesIds) {
-        let data = await fetchOnlyRwaTermsViaDedicatedWorker(`https://rojgarwithankit.co.in/_next/data/${NEXT_BUILD_ID}/test-series/${tsId}/test-ssc/${testId}/terms.json?id=${tsId}&testId=${testId}`);
+        let data = await fetchTermsViaMultiWorker(`https://rojgarwithankit.co.in/_next/data/${NEXT_BUILD_ID}/test-series/${tsId}/test-ssc/${testId}/terms.json?id=${tsId}&testId=${testId}`);
         if (data && data.pageProps && (data.pageProps.test || data.pageProps.testSections)) return data;
-        data = await fetchOnlyRwaTermsViaDedicatedWorker(`https://rojgarwithankit.co.in/_next/data/${NEXT_BUILD_ID}/test-series/${tsId}/test-ssc/${testId}/attempt.json?id=${tsId}&testId=${testId}`);
+        data = await fetchTermsViaMultiWorker(`https://rojgarwithankit.co.in/_next/data/${NEXT_BUILD_ID}/test-series/${tsId}/test-ssc/${testId}/attempt.json?id=${tsId}&testId=${testId}`);
         if (data && data.pageProps && (data.pageProps.test || data.pageProps.testSections)) return data;
     }
     return null;
 }
 
+async function fetchTestFromCloudVault(testId) {
+    if (!testId || typeof window.rwaSecureFetch !== "function") return null;
+    const apiBase = window.NEW_PRO_API_BASE || "https://pdfsownlaoder.onrender.com";
+    try {
+        const res = await window.rwaSecureFetch(`${apiBase}/api/vault/test/${encodeURIComponent(testId)}`);
+        if (res.ok && res.data && res.data.status === "success" && res.data.test_data) {
+            return res.data.test_data;
+        }
+    } catch {}
+    return null;
+}
+
+function saveTestToCloudVaultBg(t, loadedQuestions, orderedServerSections, exactTestMeta, pagePropsObj) {
+    if (!t || !t.id || t.isCustom || !Array.isArray(loadedQuestions) || !loadedQuestions.length) return;
+    if (typeof window.rwaSecureFetch !== "function") return;
+    const apiBase = window.NEW_PRO_API_BASE || "https://pdfsownlaoder.onrender.com";
+
+    // Also cache in Local IndexedDB for instant 0ms reload on same device
+    if (typeof window.rwaIdbSet === "function") {
+        window.rwaIdbSet(`vault_local_test_${t.id}`, {
+            test_id: String(t.id),
+            terms_meta: exactTestMeta || t,
+            sections: orderedServerSections || [],
+            questions: loadedQuestions,
+            cached_at: Date.now()
+        });
+    }
+
+    const payload = {
+        test_id: String(t.id),
+        series_id: String(t.seriesId || t.test_series_id || (window.state && window.state.activeSeriesId) || ""),
+        subject_id: String((window.state && window.state.activeTsSubId) || "-1"),
+        title: (exactTestMeta && exactTestMeta.title) || t.title || `Test #${t.id}`,
+        terms_meta: {
+            title: (exactTestMeta && exactTestMeta.title) || t.title || "",
+            time: (exactTestMeta && exactTestMeta.time) || t.time || "60",
+            marks: (exactTestMeta && exactTestMeta.marks) || t.marks || "",
+            restrict_part_switching: (exactTestMeta && exactTestMeta.restrict_part_switching) || t.restrict_part_switching || "0",
+            show_sectionselector: (exactTestMeta && exactTestMeta.show_sectionselector) || t.show_sectionselector || "0",
+            maximumsection: (exactTestMeta && exactTestMeta.maximumsection) || "",
+            minimumsection: (exactTestMeta && exactTestMeta.minimumsection) || "",
+            language: (exactTestMeta && exactTestMeta.language) || "",
+            pdf_url: (exactTestMeta && exactTestMeta.pdf_url) || t.resolvedPdf || t.pdf_url || ""
+        },
+        page_props_meta: { buildId: NEXT_BUILD_ID },
+        sections: orderedServerSections || [],
+        questions: loadedQuestions
+    };
+
+    // Backend deduplicates via SHA-256 content_hash -> ZERO duplicates!
+    window.rwaSecureFetch(`${apiBase}/api/vault/save_test`, {
+        method: "POST",
+        body: payload
+    }).catch(() => {});
+}
+
 async function fetchQuestionsAndSectionsForMeta(t) {
     let exactTestMeta = null, pagePropsObj = null, loadedQuestions = [], externalSecMap = {}, orderedServerSections = [];
-    const rawJsonData = await fetchRwaNextTermsData(t);
+
+    // 1. Check Cloud Vault & Live Terms in parallel when possible (Cloud Vault rescues 502 & deleted upstream tests!)
+    const [vaultDoc, rawJsonData] = await Promise.all([
+        fetchTestFromCloudVault(t.id),
+        fetchRwaNextTermsData(t)
+    ]);
 
     if (rawJsonData && rawJsonData.pageProps) {
         pagePropsObj = rawJsonData.pageProps;
@@ -346,6 +449,17 @@ async function fetchQuestionsAndSectionsForMeta(t) {
         });
     }
 
+    // If live terms failed (e.g. Cloudflare 502) but Cloud Vault has sections/terms_meta -> use Vault's terms!
+    if (orderedServerSections.length === 0 && vaultDoc && Array.isArray(vaultDoc.sections) && vaultDoc.sections.length > 0) {
+        exactTestMeta = { ...(vaultDoc.terms_meta || {}), ...(exactTestMeta || {}) };
+        vaultDoc.sections.forEach((sec, idx) => {
+            const sid = String(sec.secId || sec.section_id || (idx + 1));
+            const secInfo = { ...sec, secId: sid, orderIndex: typeof sec.orderIndex === "number" ? sec.orderIndex : idx };
+            orderedServerSections.push(secInfo);
+            externalSecMap[sid] = secInfo;
+        });
+    }
+
     const rawQField = (exactTestMeta && (exactTestMeta.test_questions_url || exactTestMeta.test_questions_url_2)) || t.test_questions_url || t.questions_url || "";
     const qUrlToFetch = (typeof decryptAppX === "function" && rawQField && !String(rawQField).startsWith("http")) ? (decryptAppX(rawQField) || rawQField) : String(rawQField).replace(/\\\//g, "/").trim();
 
@@ -355,6 +469,29 @@ async function fetchQuestionsAndSectionsForMeta(t) {
         if (!qJson && window.WORKER_RAW_PROXY) { try { const r = await fetch(window.WORKER_RAW_PROXY + encodeURIComponent(qUrlToFetch)); if (r.ok) qJson = await r.json(); } catch {} }
         if (qJson) loadedQuestions = Array.isArray(qJson) ? qJson : (qJson.data || qJson.questions || []);
     }
+
+    // Auto-Save fresh live questions & terms to Cloud Content Vault (Zero Duplicates!)
+    if (loadedQuestions.length > 0) {
+        saveTestToCloudVaultBg(t, loadedQuestions, orderedServerSections, exactTestMeta, pagePropsObj);
+    } else if (vaultDoc && Array.isArray(vaultDoc.questions) && vaultDoc.questions.length > 0) {
+        // Live upstream deleted or unreachable -> Serve seamlessly from Cloud Content Vault!
+        loadedQuestions = vaultDoc.questions;
+        exactTestMeta = exactTestMeta || vaultDoc.terms_meta || {};
+        if (typeof window.tsToast === "function") window.tsToast("☁️ Loaded smoothly from Cloud Vault!", "info");
+    } else if (typeof window.rwaIdbGet === "function") {
+        // Final fallback: Device IndexedDB Edge Cache
+        const localDoc = await window.rwaIdbGet(`vault_local_test_${t.id}`);
+        if (localDoc && Array.isArray(localDoc.questions) && localDoc.questions.length > 0) {
+            loadedQuestions = localDoc.questions;
+            exactTestMeta = exactTestMeta || localDoc.terms_meta || {};
+            (localDoc.sections || []).forEach((s, i) => {
+                const sid = String(s.secId || (i + 1));
+                orderedServerSections.push(s); externalSecMap[sid] = s;
+            });
+            if (typeof window.tsToast === "function") window.tsToast("💾 Loaded from Device Offline Cache!", "info");
+        }
+    }
+
     return { loadedQuestions, externalSecMap, orderedServerSections, exactTestMeta, pagePropsObj };
 }
 
@@ -558,7 +695,10 @@ window.resumeSavedTest = function() {
     tcsState.sectionSecondsLeft = Array.isArray(p.sectionSecondsLeft) ? p.sectionSecondsLeft : [];
     tcsState.activeSectionIndex = Math.min(p.activeSectionIndex || 0, Math.max(0, tcsState.activeSections.length - 1));
     tcsState.secondsLeft = p.secondsLeft || 60; tcsState.currentQIdx = Math.min(p.currentQIdx || 0, Math.max(0, tcsState.questions.length - 1));
+    tcsState.strictMode = Boolean(document.getElementById("strictExamToggle")?.checked);
+    tcsState.fiveMinWarned = false;
     if (p.lang) tcsState.lang = p.lang;
+    if (tcsState.strictMode && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
     document.getElementById("start-screen").classList.add("tcs-hidden"); document.getElementById("live-test-screen").classList.remove("tcs-hidden");
     ensureCloseResumeUI(); renderTcsTabs(); updateDynamicSubmitBtnLabel(); loadQuestion(tcsState.currentQIdx); startTcsTimer(); applyTcsFontSize();
     if (typeof window.tsLogActivity === "function") window.tsLogActivity("RESUME_TEST", (tcsState.testMeta && tcsState.testMeta.title) || "Test");
@@ -576,13 +716,20 @@ function populateActiveQuestionsFromChosenSections() {
 }
 
 // =========================================================
-// LIVE CBT TEST + QUESTION MISTAKE FLAG + SHORTCUTS
+// LIVE CBT TEST + STRICT REAL-EXAM MODE
 // =========================================================
 window.startTest = function() {
     const t = tcsState.testMeta || {};
     populateActiveQuestionsFromChosenSections();
     tcsState.responses = {}; tcsState.currentQIdx = 0; tcsState.activeSectionIndex = 0; tcsState.tabSwitchWarnings = 0;
+    tcsState.strictMode = Boolean(document.getElementById("strictExamToggle")?.checked);
+    tcsState.fiveMinWarned = false;
     document.getElementById("tcsTabSwitchBadge")?.classList.add("hidden");
+
+    if (tcsState.strictMode) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+        if (typeof window.tsToast === "function") window.tsToast("🛡️ Strict Real-Exam Mode ON (3 tab switches = auto-submit)", "warning");
+    }
 
     const tStr = String(t.time || "").trim(), hasPlus = tStr.includes("+"), hasFixed = tcsState.activeSections.some(s => parseFloat(s.fixedTiming || 0) > 0);
     if (hasPlus) {
@@ -625,7 +772,14 @@ document.addEventListener("visibilitychange", () => {
     const liveEl = document.getElementById("live-test-screen");
     if (document.hidden && liveEl && !liveEl.classList.contains("tcs-hidden") && !tcsState.isSubmitted) {
         tcsState.tabSwitchWarnings++; savePausedTestState();
-        const b = document.getElementById("tcsTabSwitchBadge"); if (b) { b.textContent = `⚠️ ${tcsState.tabSwitchWarnings}`; b.classList.remove("hidden"); }
+        const b = document.getElementById("tcsTabSwitchBadge");
+        if (b) { b.textContent = `⚠️ ${tcsState.tabSwitchWarnings}${tcsState.strictMode ? "/3" : ""}`; b.classList.remove("hidden"); }
+        if (tcsState.strictMode && tcsState.tabSwitchWarnings >= 3) {
+            playSubtleBeep();
+            window.submitTest();
+            window.showRwaPopup({ title: "Strict Exam Auto-Submit", message: "3 baar tab/app switch karne par Strict Real-Exam Mode ne aapka test auto-submit kar diya hai.", type: "warn", icon: "🛡️" });
+            return;
+        }
         if (typeof window.tsToast === "function") window.tsToast(`⚠️ Tab switch #${tcsState.tabSwitchWarnings} detected!`, "warning");
     }
 });
@@ -647,6 +801,7 @@ function advanceToNextLockedSection() {
     if (tcsState.activeSectionIndex < tcsState.activeSections.length - 1) {
         tcsState.sectionSecondsLeft[tcsState.activeSectionIndex] = 0; tcsState.activeSectionIndex++;
         tcsState.secondsLeft = tcsState.sectionSecondsLeft[tcsState.activeSectionIndex];
+        tcsState.fiveMinWarned = false;
         renderTcsTabs(); updateDynamicSubmitBtnLabel();
         const fq = tcsState.activeSections[tcsState.activeSectionIndex].questions[0]; if (fq) loadQuestion(fq.originalIndex);
         savePausedTestState();
@@ -666,6 +821,14 @@ function startTcsTimer() {
         tcsState.responses[idx].timeSpent = (tcsState.responses[idx].timeSpent || 0) + 1;
         const qt = document.getElementById("tcs-q-time"); if (qt) qt.textContent = formatMMSS(tcsState.responses[idx].timeSpent);
         if (++_tcsAutoSaveCounter % 15 === 0) savePausedTestState();
+
+        // Last 5-Minute Warning Beep (Strict Exam Mode)
+        if (tcsState.strictMode && !tcsState.fiveMinWarned && tcsState.secondsLeft === 300) {
+            tcsState.fiveMinWarned = true;
+            playSubtleBeep();
+            if (typeof window.tsToast === "function") window.tsToast("⏰ Only 5 Minutes Remaining!", "warning");
+        }
+
         if (tcsState.secondsLeft <= 0) {
             if (tcsState.isSectionalTiming && tcsState.activeSectionIndex < tcsState.activeSections.length - 1) { window.closeTcsActionModal(); advanceToNextLockedSection(); return; }
             clearInterval(tcsState.timerInterval); submitTest(); return;
@@ -773,7 +936,7 @@ window.toggleTcsLangMode = function() {
     else if (!document.getElementById("solutions-screen").classList.contains("tcs-hidden")) renderSolutionsList(tcsState.activeSolFilter);
     else if (!document.getElementById("full-sol-screen").classList.contains("tcs-hidden")) renderFullSolutionContent(tcsState.activeFullSolIdx);
 };
-window.toggleTcsFullScreen = function() { if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {}); else if (document.exitFullscreen) document.exitFullscreen(); };
+window.toggleTcsFullScreen = function() { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {}); else if (document.exitFullscreen) document.exitFullscreen(); };
 window.toggleTcsPalette = function() { const p = document.getElementById("tcs-palette"); p.classList.toggle("show"); if (p.classList.contains("show")) renderTcsAccordionGrid(); };
 
 function renderTcsAccordionGrid() {
@@ -797,7 +960,7 @@ window.jumpToQuestion = function(gi) {
 };
 
 // =========================================================
-// SUBMIT + CUT-OFF PREDICTOR + E2E LEADERBOARD + SHARE PNG
+// SUBMIT + 4-COLOUR HEATMAP + SECTION WAVEFORM + 1-V-1 CHALLENGE + OFFLINE QUEUE
 // =========================================================
 window.handleDynamicSubmit = function() {
     if (tcsState.isSectionalTiming && tcsState.activeSectionIndex < tcsState.activeSections.length - 1) {
@@ -838,11 +1001,8 @@ function renderCategoryCutoffPredictor(score, maxMarks) {
     else if (rawCat.includes("ST")) userCat = "ST";
 
     const cutoffs = {
-        UR: Math.round(maxMarks * 0.78),
-        OBC: Math.round(maxMarks * 0.74),
-        EWS: Math.round(maxMarks * 0.73),
-        SC: Math.round(maxMarks * 0.67),
-        ST: Math.round(maxMarks * 0.62)
+        UR: Math.round(maxMarks * 0.78), OBC: Math.round(maxMarks * 0.74),
+        EWS: Math.round(maxMarks * 0.73), SC: Math.round(maxMarks * 0.67), ST: Math.round(maxMarks * 0.62)
     };
     const myCut = cutoffs[userCat] || cutoffs.UR;
     const diff = Number((score - myCut).toFixed(1));
@@ -857,8 +1017,63 @@ function renderCategoryCutoffPredictor(score, maxMarks) {
         </div>`;
 }
 
+function render4ColorTimeHeatmap() {
+    const grid = document.getElementById("tcsHeatmapGrid");
+    if (!grid) return;
+    grid.innerHTML = tcsState.questions.map((q, i) => {
+        const r = tcsState.responses[i] || {};
+        const spent = r.timeSpent || 0;
+        const ans = String(q.answer || q.correct_option || "1").trim();
+        let cls = "hm-un", tip = `Q.${i + 1}: Skipped (${spent}s)`;
+        if (r.chosenOption) {
+            if (String(r.chosenOption) === ans) {
+                cls = spent < 45 ? "hm-fc" : "hm-sc";
+                tip = `Q.${i + 1}: ${spent < 45 ? "Fast" : "Slow"} Correct (${spent}s)`;
+            } else {
+                cls = spent >= 60 ? "hm-sw" : "hm-fw";
+                tip = `Q.${i + 1}: ${spent >= 60 ? "Time-Trap" : (spent <= 5 ? "Fast Tukka" : "Wrong")} (${spent}s)`;
+            }
+        }
+        return `<div onclick="openFullSolution(${i})" class="hm-cell ${cls}" title="${tip}">${i + 1}</div>`;
+    }).join("");
+}
+
+window.createAndShareFriendChallenge = async function() {
+    const apiBase = window.NEW_PRO_API_BASE || "https://pdfsownlaoder.onrender.com";
+    if (typeof window.rwaSecureFetch !== "function") return;
+    const payload = {
+        user_id: typeof window.tsGetActiveUserId === "function" ? window.tsGetActiveUserId() : "guest",
+        user_name: typeof window.tsGetActiveUserName === "function" ? window.tsGetActiveUserName() : "RWA Student",
+        test_id: String((tcsState.testMeta && tcsState.testMeta.id) || ""),
+        series_id: String((tcsState.testMeta && (tcsState.testMeta.seriesId || tcsState.testMeta.test_series_id)) || ""),
+        test_title: (tcsState.testMeta && tcsState.testMeta.title) || "Paid Mock Test",
+        score: tcsState.lastSubmittedScore,
+        max_marks: tcsState.lastMaxMarks,
+        accuracy: tcsState.lastAccuracy,
+        time_taken_sec: tcsState.lastTotalSpentSec
+    };
+
+    try {
+        const res = await window.rwaSecureFetch(`${apiBase}/api/challenge/create`, { method: "POST", body: payload });
+        const ch = res.data && res.data.challenge;
+        if (!ch || !ch.challenge_id) throw new Error();
+        const baseUrl = window.location.origin + window.location.pathname;
+        const link = `${baseUrl}?challenge=${encodeURIComponent(ch.challenge_id)}`;
+        const shareMsg = `⚔️ I scored ${payload.score}/${payload.max_marks} (${payload.accuracy}% Acc) in "${payload.test_title}"! Can you beat my score? Try here: ${link}`;
+
+        if (navigator.share) {
+            try { await navigator.share({ title: "1-v-1 RWA Mock Challenge", text: shareMsg, url: link }); return; } catch {}
+        }
+        await navigator.clipboard.writeText(shareMsg);
+        if (typeof window.tsToast === "function") window.tsToast("⚔️ 1-v-1 Challenge Link Copied! Dost ko WhatsApp/TG par bhejein.", "success");
+    } catch {
+        if (typeof window.tsToast === "function") window.tsToast("Challenge link create nahi ho paya.", "error");
+    }
+};
+
 window.submitTest = function(isRestoringSaved = false, fallbackSavedStats = null) {
     if (tcsState.timerInterval) clearInterval(tcsState.timerInterval);
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
     tcsState.isSubmitted = true;
     if (!isRestoringSaved) clearPausedTestState();
 
@@ -895,9 +1110,9 @@ window.submitTest = function(isRestoringSaved = false, fallbackSavedStats = null
     const totalSpentSec = timeCorr + timeInc + timeUna;
 
     tcsState.lastSubmittedScore = score; tcsState.lastMaxMarks = maxMarks; tcsState.lastAccuracy = accuracy;
+    tcsState.lastTotalSpentSec = totalSpentSec;
     tcsState.lastCounts = { correct, incorrect, unattempted }; tcsState.lastWrongQuestions = wrongForMistakes.map(x => x.qObj);
 
-    // Section-wise Analysis first so sectionStats can be saved everywhere
     const sCont = document.getElementById("analysis-sections-container"), weakCard = document.getElementById("weak-areas-card"), weakList = document.getElementById("weak-areas-list");
     sCont.innerHTML = "";
     const weakSubjects = [], secStatsPayload = [];
@@ -950,7 +1165,47 @@ window.submitTest = function(isRestoringSaved = false, fallbackSavedStats = null
     document.getElementById("res-acc").textContent = `${accuracy}%`;
     document.getElementById("res-rank").textContent = "Syncing...";
     document.getElementById("res-perc").textContent = "--";
+
+    // Render Section Spline Waveform + 4-Colour Heatmap + Cut-Off Predictor
+    if (typeof window.renderSplineWaveformSvg === "function") {
+        const wavePts = secStatsPayload.map(s => ({
+            label: s.name.split(" ")[0],
+            value: s.accuracy,
+            detail: `${s.name}: Score ${s.score} • Accuracy ${s.accuracy}% (✓${s.correct} / ✕${s.incorrect} / −${s.unattempted})`
+        }));
+        window.renderSplineWaveformSvg("tcsAnalysisWaveContainer", "tcsAnalysisWaveReadout", wavePts);
+    }
+    render4ColorTimeHeatmap();
     renderCategoryCutoffPredictor(score, maxMarks);
+
+    // 1-v-1 Friend Challenge Head-to-Head Result Comparison
+    const chBanner = document.getElementById("tcsChallengeResultBanner");
+    if (chBanner) {
+        const ch = window.ACTIVE_CHALLENGE;
+        if (!isRestoringSaved && ch && String(ch.test_id) === String((tcsState.testMeta && tcsState.testMeta.id) || "")) {
+            const won = score > ch.challenger_score;
+            const tie = score === ch.challenger_score;
+            chBanner.innerHTML = `
+                <div class="text-center space-y-1.5">
+                    <div class="text-xs font-black uppercase text-indigo-700">⚔️ 1-V-1 CHALLENGE RESULT</div>
+                    <div class="text-lg font-black text-slate-900">${won ? "🏆 YOU WON!" : (tie ? "🤝 IT'S A TIE!" : "🔥 SO CLOSE!")}</div>
+                    <div class="text-xs font-bold text-slate-700">You: <strong>${score}/${maxMarks}</strong> (${accuracy}%) vs ${tsEscHtml(ch.challenger_name)}: <strong>${ch.challenger_score}/${ch.max_marks}</strong> (${ch.challenger_accuracy}%)</div>
+                </div>`;
+            chBanner.classList.remove("hidden");
+            if (typeof window.rwaSecureFetch === "function") {
+                window.rwaSecureFetch(`${window.NEW_PRO_API_BASE}/api/challenge/${encodeURIComponent(ch.challenge_id)}/complete`, {
+                    method: "POST",
+                    body: {
+                        user_id: typeof tsGetActiveUserId === "function" ? tsGetActiveUserId() : "guest",
+                        user_name: typeof tsGetActiveUserName === "function" ? tsGetActiveUserName() : "Friend",
+                        score, accuracy, time_taken_sec: totalSpentSec
+                    }
+                }).catch(() => {});
+            }
+        } else {
+            chBanner.classList.add("hidden");
+        }
+    }
 
     document.getElementById("cmp-score").textContent = score;
     document.getElementById("cmp-top").textContent = (maxMarks * 0.88).toFixed(1);
@@ -1014,6 +1269,9 @@ async function syncScoreAndLoadLeaderboard(attemptPayload, isRestoringSaved, sco
         const json = res && res.data;
 
         if (json && json.status === "success" && json.leaderboard) {
+            if (!isRestoringSaved && json.xp_earned && typeof window.tsToast === "function") {
+                window.tsToast(`⚡ +${json.xp_earned} XP Earned!`, "success");
+            }
             const lb = json.leaderboard;
             tcsState.lastRankStr = lb.my_rank ? `#${lb.my_rank}/${lb.total_participants}` : "#1";
             tcsState.lastPercStr = `${lb.my_percentile ?? 100}%ile`;
@@ -1042,11 +1300,17 @@ async function syncScoreAndLoadLeaderboard(attemptPayload, isRestoringSaved, sco
         }
     } catch {}
 
+    // Offline-Safe Queue Fallback (Zero Data Loss!)
+    if (!isRestoringSaved && typeof window.tsEnqueueOfflineSubmit === "function") {
+        window.tsEnqueueOfflineSubmit(attemptPayload);
+        if (typeof window.tsToast === "function") window.tsToast("💾 Offline Saved! Net aate hi Leaderboard par auto-sync ho jayega.", "info");
+    }
+
     tcsState.lastRankStr = score >= maxMarks * 0.75 ? "#12" : "#148";
     tcsState.lastPercStr = `${Math.min(99.8, Math.max(15, (score / (maxMarks || 1)) * 100 + 12)).toFixed(1)}%ile`;
     document.getElementById("res-rank").textContent = tcsState.lastRankStr;
     document.getElementById("res-perc").textContent = tcsState.lastPercStr;
-    if (lbBody) lbBody.innerHTML = `<div class="text-slate-500 font-bold text-center py-2">Offline mode: Live leaderboard next sync par update hoga.</div>`;
+    if (lbBody) lbBody.innerHTML = `<div class="text-slate-500 font-bold text-center py-2">Offline-Safe Mode: Score safely queued — net aate hi live rank update ho jayegi.</div>`;
 }
 
 // =========================================================
@@ -1057,31 +1321,24 @@ window.shareScorecardPng = function() {
     canvas.width = 900; canvas.height = 1050;
     const ctx = canvas.getContext("2d");
 
-    // Gradient Background
     const grad = ctx.createLinearGradient(0, 0, 900, 1050);
     grad.addColorStop(0, "#1e1b4b"); grad.addColorStop(0.55, "#2563eb"); grad.addColorStop(1, "#0ea5e9");
     ctx.fillStyle = grad; ctx.fillRect(0, 0, 900, 1050);
 
-    // Inner White Card
     ctx.fillStyle = "#ffffff";
     ctx.beginPath(); ctx.roundRect(50, 150, 800, 820, 36); ctx.fill();
 
-    // Header Branding
     ctx.fillStyle = "#ffffff"; ctx.textAlign = "center";
     ctx.font = "900 42px Segoe UI, Arial"; ctx.fillText("RWA TEST SERIES", 450, 80);
     ctx.font = "700 22px Segoe UI, Arial"; ctx.fillStyle = "#bae6fd"; ctx.fillText("OFFICIAL MOCK TEST SCORECARD", 450, 118);
 
-    // Student & Test Info
     const studentName = typeof window.tsGetActiveUserName === "function" ? window.tsGetActiveUserName() : "RWA Student";
     const vip = localStorage.getItem("rwa_user_vip_badge") || "";
     const testTitle = ((tcsState.testMeta && tcsState.testMeta.title) || "Paid Mock Test").slice(0, 42);
 
-    ctx.fillStyle = "#0f172a"; ctx.font = "900 36px Segoe UI, Arial";
-    ctx.fillText(`${studentName} ${vip}`.trim(), 450, 235);
-    ctx.fillStyle = "#4f46e5"; ctx.font = "700 24px Segoe UI, Arial";
-    ctx.fillText(testTitle, 450, 280);
+    ctx.fillStyle = "#0f172a"; ctx.font = "900 36px Segoe UI, Arial"; ctx.fillText(`${studentName} ${vip}`.trim(), 450, 235);
+    ctx.fillStyle = "#4f46e5"; ctx.font = "700 24px Segoe UI, Arial"; ctx.fillText(testTitle, 450, 280);
 
-    // 4 Big Stat Boxes
     const boxes = [
         { x: 95, y: 330, bg: "#ffedd5", lbl: "SCORE", val: `${tcsState.lastSubmittedScore}/${tcsState.lastMaxMarks}` },
         { x: 475, y: 330, bg: "#fef3c7", lbl: "ALL-INDIA RANK", val: tcsState.lastRankStr },
@@ -1094,7 +1351,6 @@ window.shareScorecardPng = function() {
         ctx.fillStyle = "#0f172a"; ctx.font = "900 46px Segoe UI, Arial"; ctx.fillText(b.val, b.x + 165, b.y + 118);
     });
 
-    // Bottom 3 Mini Counts
     const c = tcsState.lastCounts || { correct: 0, incorrect: 0, unattempted: 0 };
     const minis = [
         { x: 95, bg: "#dcfce7", col: "#15803d", txt: `✓ Correct: ${c.correct}` },
@@ -1106,7 +1362,6 @@ window.shareScorecardPng = function() {
         ctx.fillStyle = m.col; ctx.font = "800 22px Segoe UI, Arial"; ctx.fillText(m.txt, m.x + 105, 775);
     });
 
-    // Footer Date
     ctx.fillStyle = "#64748b"; ctx.font = "700 20px Segoe UI, Arial";
     ctx.fillText(`Generated on ${new Date().toLocaleDateString("en-IN")} • Verified RWA Mock Result`, 450, 910);
 
@@ -1116,10 +1371,7 @@ window.shareScorecardPng = function() {
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try { await navigator.share({ title: "My RWA Mock Scorecard", text: `I scored ${tcsState.lastSubmittedScore}/${tcsState.lastMaxMarks} (${tcsState.lastRankStr}) in ${testTitle}!`, files: [file] }); return; } catch {}
         }
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `RWA_Scorecard_${Date.now()}.png`;
-        a.click();
+        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `RWA_Scorecard_${Date.now()}.png`; a.click();
         if (typeof window.tsToast === "function") window.tsToast("📸 Branded Scorecard PNG Downloaded!", "success");
     }, "image/png");
 };
@@ -1174,6 +1426,7 @@ window.reAttemptCbtTest = window.reAttemptTcsTest;
 
 window.exitCbtTest = function() {
     if (tcsState.timerInterval) clearInterval(tcsState.timerInterval);
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
     ["start-screen", "submit-screen", "live-test-screen", "solutions-screen", "full-sol-screen", "analysis-screen"].forEach(id => document.getElementById(id)?.classList.add("tcs-hidden"));
     if (typeof window.showSlide === "function") window.showSlide("slideExplorer");
 };
