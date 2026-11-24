@@ -31,6 +31,70 @@
             font-weight: normal;
             font-style: normal;
         }
+
+        /* STYLE #5: UNIFIED LIVE BAR (PULSING LIVE + DATE + TICKING TIME) */
+        .rwa-unified-live-bar {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2.5px 9px 2.5px 7px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #ecfdf5 0%, #eff6ff 55%, #e0f2fe 100%);
+            border: 1px solid #a7f3d0;
+            box-shadow: 0 2px 6px rgba(16, 185, 129, 0.12);
+            font-size: 10px;
+            font-weight: 800;
+            line-height: 1.25;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            margin-top: 2px;
+        }
+        .rwa-live-dot-pulse {
+            width: 6.5px;
+            height: 6.5px;
+            border-radius: 999px;
+            background: #10b981;
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.65);
+            animation: rwaPulseRing 1.6s infinite;
+            flex-shrink: 0;
+        }
+        @keyframes rwaPulseRing {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.65); }
+            70% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        .rwa-ulb-live { color: #047857; font-weight: 900; }
+        .rwa-ulb-sep { color: #94a3b8; font-weight: 900; }
+        .rwa-ulb-date { color: #1e40af; font-weight: 800; }
+        .rwa-ulb-time { color: #0f172a; font-weight: 900; }
+
+        body.dark-mode .rwa-unified-live-bar {
+            background: linear-gradient(135deg, rgba(6, 78, 59, 0.55) 0%, rgba(15, 23, 42, 0.92) 60%, rgba(30, 58, 138, 0.55) 100%);
+            border-color: rgba(52, 211, 153, 0.35);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+        }
+        body.dark-mode .rwa-ulb-live { color: #34d399; }
+        body.dark-mode .rwa-ulb-date { color: #7dd3fc; }
+        body.dark-mode .rwa-ulb-time { color: #f8fafc; }
+
+        /* 4-COLOUR QUESTION TIME-HEATMAP CELLS */
+        .hm-cell {
+            height: 34px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 900;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.14s ease;
+        }
+        .hm-cell:active { transform: scale(0.94); }
+        .hm-fc { background: #dcfce7; color: #15803d; border: 1.5px solid #86efac; }
+        .hm-sc { background: #dbeafe; color: #1d4ed8; border: 1.5px solid #93c5fd; }
+        .hm-fw { background: #fef3c7; color: #b45309; border: 1.5px solid #fcd34d; }
+        .hm-sw { background: #fee2e2; color: #be123c; border: 1.5px solid #fca5a5; }
+        .hm-un { background: #f1f5f9; color: #64748b; border: 1.5px solid #cbd5e1; }
     </style>
 
     <!-- GLOBAL WEBVIEW NATIVE DIALOG BLOCKER (101% NO URL IN WEBVIEW) -->
@@ -149,19 +213,26 @@
     </div>
 
     <!-- =========================================================
-         MINIMALIST COACHING APP TOP BAR (LOGO + SEARCH + BELL + THEME)
+         MINIMALIST COACHING APP TOP BAR + STYLE #5 UNIFIED LIVE BAR
          ========================================================= -->
     <nav id="topHeaderNav" class="app-top-bar sticky top-0 z-40 px-4 py-3">
-        <div class="max-w-5xl mx-auto flex items-center justify-between gap-3">
-            <div class="flex items-center gap-3 cursor-pointer min-w-0" onclick="goHomeHub()">
+        <div class="max-w-5xl mx-auto flex items-center justify-between gap-2.5">
+            <div class="flex items-center gap-2.5 cursor-pointer min-w-0" onclick="goHomeHub()">
                 <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white font-black text-xl shadow-md shrink-0">R</div>
                 <div class="min-w-0">
                     <div id="headerMainTitle" class="font-black text-base sm:text-lg leading-tight tracking-tight truncate">RWA TEST SERIES</div>
-                    <div id="apiStatus" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100/90 text-emerald-700 text-[10px] font-black mt-0.5">● Live</div>
+                    <div class="rwa-unified-live-bar">
+                        <span class="rwa-live-dot-pulse"></span>
+                        <span id="apiStatus" class="rwa-ulb-live">Live</span>
+                        <span class="rwa-ulb-sep">•</span>
+                        <span id="hdrClockDate" class="rwa-ulb-date">--</span>
+                        <span class="rwa-ulb-sep">•</span>
+                        <span id="hdrClockTime" class="rwa-ulb-time">--:--:--</span>
+                    </div>
                 </div>
             </div>
 
-            <div class="flex items-center gap-2 shrink-0">
+            <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <button id="inboxBellBtn" onclick="openStudentInboxModal()" class="app-hdr-icon relative" title="Notifications & Replies">
                     <span>🔔</span>
                     <span id="inboxUnreadDot" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center">0</span>
@@ -185,15 +256,17 @@
             <!-- LIVE ADMIN NOTICE BANNER -->
             <div id="liveNoticeBanner" class="hidden mb-3.5"></div>
 
+            <!-- INCOMING 1-V-1 FRIEND CHALLENGE BANNER -->
+            <div id="incomingChallengeBanner" class="hidden mb-3.5"></div>
+
             <!-- SCHEDULED WEEKLY LIVE MOCK BANNER (SUNDAY SPECIAL) -->
             <div id="scheduledMocksBanner" class="hidden mb-3.5"></div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 1: TESTS EXPLORER (SLIDE 1 HOME + SLIDE 2 FOLDER/TESTS)
+                 TAB 1: TESTS EXPLORER (ORIGINAL LAYOUT 100% UNCHANGED)
                  ───────────────────────────────────────────────────── -->
             <div id="appViewTests" class="space-y-4">
 
-                <!-- SLIDE 1 HOME BLOCK -->
                 <div id="homeSeriesTopBlock" class="space-y-3.5">
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                         <div class="home-pill-stat">
@@ -269,7 +342,7 @@
             </div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 2: MY PROGRESS, STRENGTH METER & TREND (SLIDE 3)
+                 TAB 2: MY PROGRESS, SPLINE WAVEFORM, BOOSTER & WEEKLY XP LEAGUE
                  ───────────────────────────────────────────────────── -->
             <div id="appViewDashboard" class="hidden space-y-4">
                 <div class="app-card p-5">
@@ -289,20 +362,40 @@
                     <p id="dashProgressSubtext" class="text-xs font-bold opacity-70 mt-3.5 text-center">Abhi tak aapne 0 tests attempt kiye hain.</p>
                 </div>
 
-                <!-- SUBJECT-WISE STRENGTH & WEAKNESS METER -->
+                <!-- INTERACTIVE SPLINE WAVEFORM PERFORMANCE GRAPH -->
+                <div id="progressWaveCard" class="app-card p-5 space-y-3">
+                    <div class="flex justify-between items-center gap-2 flex-wrap">
+                        <div>
+                            <h3 class="text-base font-black">〰️ Performance Spline Waveform</h3>
+                            <p class="text-[11px] font-bold opacity-65">Tap any node to inspect Score % & Accuracy %</p>
+                        </div>
+                        <span id="waveTrendDeltaBadge" class="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black">Live Trend</span>
+                    </div>
+                    <div id="progressWaveContainer" class="w-full overflow-x-auto no-scrollbar"></div>
+                    <div id="progressWaveReadout" class="p-2.5 rounded-xl bg-sky-50 dark:bg-slate-800 border border-sky-200/70 dark:border-slate-700 text-xs font-extrabold text-center text-blue-800 dark:text-sky-300">
+                        Mock tests attempt karte hi aapka smooth Spline Waveform graph yahan dikhega.
+                    </div>
+                </div>
+
+                <!-- SUBJECT-WISE STRENGTH METER + 1-CLICK WEAKEST BOOSTER -->
                 <div id="subjectStrengthCard" class="app-card p-5 hidden">
-                    <h3 class="text-base font-black mb-3">💪 Subject-Wise Strength & Weakness Meter</h3>
+                    <div class="flex justify-between items-center gap-2 mb-3">
+                        <h3 class="text-base font-black">💪 Subject Strength & Booster</h3>
+                        <span class="text-[10px] font-black uppercase text-rose-600">1-Click Fix</span>
+                    </div>
                     <div id="subjectStrengthBars" class="space-y-3 text-xs"></div>
                 </div>
 
-                <!-- LAST 10 TESTS TREND BAR CHART -->
-                <div id="progressTrendCard" class="app-card p-5">
-                    <h3 class="text-base font-black mb-3">Last 10 Tests Performance Trend</h3>
-                    <div id="progressTrendBars" class="flex items-end gap-2.5 h-36 pt-2 overflow-x-auto no-scrollbar"></div>
-                    <div class="flex items-center justify-center gap-5 mt-3 text-xs font-bold opacity-75">
-                        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block"></span> Score (Blue)</span>
-                        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Accuracy (Green)</span>
+                <!-- WEEKLY XP & STUDY LEAGUE -->
+                <div id="weeklyXpLeagueCard" class="app-card p-5 space-y-3">
+                    <div class="flex justify-between items-center gap-2 flex-wrap">
+                        <div>
+                            <h3 class="text-base font-black">⚡ Weekly XP & Study League</h3>
+                            <p id="xpLeagueMySummary" class="text-[11px] font-bold opacity-70">Earn XP via Mock Tests, Rapid Quiz & Pomodoro</p>
+                        </div>
+                        <span id="xpMyTierBadge" class="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-black">🥉 Bronze</span>
                     </div>
+                    <div id="weeklyXpLeagueList" class="space-y-2 text-xs">Loading Weekly League...</div>
                 </div>
 
                 <!-- RECENTLY ATTEMPTED TESTS -->
@@ -316,7 +409,7 @@
             </div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 3: SAVED BOOKMARKS VAULT (SLIDE 4)
+                 TAB 3: SAVED BOOKMARKS VAULT (WITH PERSONAL NOTES)
                  ───────────────────────────────────────────────────── -->
             <div id="appViewBookmarks" class="hidden space-y-4">
                 <div id="bookmarksListSubView" class="space-y-3.5">
@@ -345,6 +438,14 @@
                         <div id="bmDetailMeta" class="flex items-center gap-2 flex-wrap"></div>
                         <div id="bmDetailQuestion" class="text-base font-bold leading-relaxed bg-sky-50/70 dark:bg-slate-800 p-4 rounded-2xl border border-sky-200/60 dark:border-slate-700"></div>
                         <div id="bmDetailOptions" class="space-y-2.5"></div>
+
+                        <!-- PERSONAL REVISION NOTE / TRICK BOX -->
+                        <div class="bg-amber-50/80 dark:bg-slate-800/90 border-2 border-amber-200 dark:border-amber-700/60 rounded-2xl p-3.5 space-y-2">
+                            <div class="font-black text-xs text-amber-900 dark:text-amber-300">📝 Personal Short Trick / Revision Note</div>
+                            <textarea id="bmDetailNoteInput" rows="2" placeholder="Apni short trick ya formula yahan likhein (e.g. Ratio = (S+D):(S-D))..." class="app-form-input text-xs"></textarea>
+                            <button onclick="saveActiveBookmarkNote()" class="px-4 py-1.5 rounded-xl bg-amber-500 text-white font-black text-xs border-0 cursor-pointer">💾 Save Note to Cloud</button>
+                        </div>
+
                         <div class="bg-sky-50 dark:bg-slate-800/90 border-2 border-sky-200 dark:border-slate-700 rounded-2xl p-4">
                             <div class="font-black text-sm text-indigo-900 dark:text-sky-300 mb-1.5">💡 Official Full Explanation</div>
                             <div id="bmDetailSolution" class="text-sm leading-relaxed"></div>
@@ -358,13 +459,13 @@
             </div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 4: PRO STUDY VAULT HUB (SLIDES 5, 15, 16 + CA CAPSULES)
+                 TAB 4: PRO STUDY VAULT HUB
                  ───────────────────────────────────────────────────── -->
             <div id="appViewProTools" class="hidden space-y-4">
                 <div id="vaultHubSubView" class="space-y-4">
                     <div class="rapid-quiz-banner p-5 rounded-3xl text-center text-white shadow-lg">
                         <div class="text-xl sm:text-2xl font-black tracking-tight">Daily 5-Min Rapid Quiz ⚡</div>
-                        <p class="text-xs font-bold opacity-90 mt-1">Rozana 5 sawal solve karein aur apni study streak active rakhein</p>
+                        <p class="text-xs font-bold opacity-90 mt-1">Rozana 5 sawal solve karein (+30 XP & Streak active rakhein)</p>
                         <button onclick="openVaultToolDetail('rapid_quiz')" class="mt-3.5 px-7 py-2.5 rounded-full bg-white text-orange-600 font-black text-sm border-0 shadow-md cursor-pointer active:scale-95 transition">Start Quiz ⚡</button>
                     </div>
 
@@ -396,7 +497,7 @@
                         <div onclick="openVaultToolDetail('pomodoro')" class="vault-tool-card">
                             <div class="vault-tool-ico bg-amber-100 text-amber-600">🍅</div>
                             <div class="font-black text-sm mt-2.5">Pomodoro Focus Timer</div>
-                            <span class="mt-1.5 text-[11px] font-bold opacity-65">Rain Sound Mode</span>
+                            <span class="mt-1.5 text-[11px] font-bold opacity-65">+25 XP / Session</span>
                         </div>
 
                         <div onclick="openVaultToolDetail('planner')" class="vault-tool-card">
@@ -430,7 +531,7 @@
             </div>
 
             <!-- ─────────────────────────────────────────────────────
-                 TAB 5: FULL-SCREEN STUDENT PROFILE (SLIDE 6)
+                 TAB 5: FULL-SCREEN STUDENT PROFILE
                  ───────────────────────────────────────────────────── -->
             <div id="appViewProfile" class="hidden space-y-4">
                 <div id="profileTabContent" class="space-y-4"></div>
@@ -444,7 +545,7 @@
         <section id="slideTestAttempt" class="slide-page hidden-slide">
             <div id="tcs-app-wrapper" class="tcs-fullscreen-shell">
 
-                <!-- STEP 1: START & SUBJECT SELECTION (SLIDE 7) -->
+                <!-- STEP 1: START & SUBJECT SELECTION + STRICT REAL-EXAM MODE -->
                 <div id="start-screen" class="tcs-step-page">
                     <div class="start-card">
                         <div class="flex items-center justify-between border-b border-slate-200 pb-3 mb-3.5">
@@ -460,11 +561,21 @@
                             <div class="start-info"><span>Maximum Marks:</span> <span id="stat-marks">--</span></div>
                             <div class="start-info"><span>Marking Scheme:</span> <span id="stat-marking">+2 / -0.5</span></div>
                         </div>
+
+                        <!-- OPTIONAL STRICT REAL-EXAM MODE SWITCH -->
+                        <label class="flex items-center justify-between gap-3 p-3 my-3 rounded-xl bg-rose-50 border border-rose-200 cursor-pointer text-left">
+                            <div>
+                                <div class="text-xs font-black text-rose-900">🛡️ Strict Real-Exam Mode (Optional)</div>
+                                <div class="text-[11px] font-bold text-rose-700/80">Fullscreen lock • Last 5-min beep • 3 tab switch par auto-submit</div>
+                            </div>
+                            <input id="strictExamToggle" type="checkbox" class="w-5 h-5 accent-rose-600 shrink-0">
+                        </label>
+
                         <button id="tcs-start-btn" class="start-btn" onclick="startTest()">Start Test ➔</button>
                     </div>
                 </div>
 
-                <!-- STEP 2: LIVE CBT TEST SCREEN (SLIDE 8 & 14) -->
+                <!-- STEP 2: LIVE CBT TEST SCREEN -->
                 <div id="live-test-screen" class="tcs-step-page tcs-hidden">
                     <div class="tcs-header">
                         <div class="flex items-center gap-2 min-w-0">
@@ -539,7 +650,7 @@
                     </div>
                 </div>
 
-                <!-- STEP 3: SUBMIT CONFIRMATION SUMMARY (SLIDE 18) -->
+                <!-- STEP 3: SUBMIT CONFIRMATION SUMMARY -->
                 <div id="submit-screen" class="tcs-step-page tcs-hidden">
                     <div class="tcs-page-inner">
                         <div class="submit-header">Submit Test Summary</div>
@@ -554,20 +665,24 @@
                     </div>
                 </div>
 
-                <!-- STEP 4: DEEP ANALYSIS, CUT-OFF PREDICTOR, LEADERBOARD & SHARE PNG (SLIDE 9) -->
+                <!-- STEP 4: DEEP ANALYSIS, SPLINE WAVEFORM, 4-COLOUR HEATMAP, CHALLENGE & LEADERBOARD -->
                 <div id="analysis-screen" class="tcs-step-page tcs-hidden">
                     <div class="analysis-header">
                         <button onclick="exitCbtTest()" class="px-3 py-1.5 rounded-lg bg-white/15 text-white font-bold text-xs border-0 cursor-pointer">← Exit</button>
                         <h1 class="text-sm sm:text-base font-black m-0">Analysis & Rank</h1>
                         <div class="flex items-center gap-1.5">
-                            <button onclick="shareScorecardPng()" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-xs border-0 cursor-pointer" title="Download/Share PNG">📸 Share</button>
-                            <button onclick="exportTestPdfSheet()" class="px-2.5 py-1.5 rounded-lg bg-white/15 text-white font-bold text-xs border border-white/25 cursor-pointer">📄 PDF</button>
+                            <button onclick="createAndShareFriendChallenge()" class="px-2.5 py-1.5 rounded-lg bg-amber-500 text-white font-bold text-xs border-0 cursor-pointer" title="1-v-1 Challenge Friend">⚔️</button>
+                            <button onclick="shareScorecardPng()" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-xs border-0 cursor-pointer" title="Download/Share PNG">📸</button>
+                            <button onclick="exportTestPdfSheet()" class="px-2.5 py-1.5 rounded-lg bg-white/15 text-white font-bold text-xs border border-white/25 cursor-pointer">📄</button>
                             <button onclick="reAttemptCbtTest()" class="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white font-bold text-xs border-0 cursor-pointer">🔄</button>
                         </div>
                     </div>
 
                     <div class="tcs-page-inner pb-8">
                         <div id="dynamic-remark" class="remark-banner" style="display:none;"></div>
+
+                        <!-- 1-V-1 HEAD-TO-HEAD CHALLENGE RESULT BANNER -->
+                        <div id="tcsChallengeResultBanner" class="a-card hidden" style="background:#eef2ff; border:2px solid #818cf8;"></div>
 
                         <div class="a-card">
                             <h2 class="text-base font-black text-slate-900 mb-3">Your Scorecard</h2>
@@ -594,6 +709,29 @@
                                 <div class="p-2 rounded-xl bg-rose-50"><div id="res-incorrect" class="font-black text-rose-700 text-base">0</div><div class="text-[10px] font-bold text-slate-500">Wrong ✕</div></div>
                                 <div class="p-2 rounded-xl bg-slate-100"><div id="res-unatt" class="font-black text-slate-700 text-base">0</div><div class="text-[10px] font-bold text-slate-500">Skipped −</div></div>
                             </div>
+                        </div>
+
+                        <!-- SECTION ACCURACY SPLINE WAVEFORM -->
+                        <div class="a-card" id="tcsAnalysisWaveCard">
+                            <h2 class="text-base font-black text-slate-900 mb-2">〰️ Section Accuracy Waveform</h2>
+                            <div id="tcsAnalysisWaveContainer" class="w-full overflow-x-auto"></div>
+                            <div id="tcsAnalysisWaveReadout" class="mt-2 p-2 rounded-xl bg-sky-50 text-xs font-extrabold text-center text-blue-900"></div>
+                        </div>
+
+                        <!-- 4-COLOUR QUESTION TIME-HEATMAP GRID -->
+                        <div class="a-card" id="tcsHeatmapCard">
+                            <div class="flex justify-between items-center mb-2">
+                                <h2 class="text-base font-black text-slate-900">🔥 4-Colour Question Time-Heatmap</h2>
+                                <span class="text-[10px] font-extrabold text-slate-500">Tap box → Solution</span>
+                            </div>
+                            <div class="flex flex-wrap gap-1.5 text-[10px] font-black mb-2.5">
+                                <span class="px-2 py-0.5 rounded hm-fc">Fast Correct</span>
+                                <span class="px-2 py-0.5 rounded hm-sc">Slow Correct</span>
+                                <span class="px-2 py-0.5 rounded hm-fw">Tukka (≤5s)</span>
+                                <span class="px-2 py-0.5 rounded hm-sw">Trap (≥60s)</span>
+                                <span class="px-2 py-0.5 rounded hm-un">Skipped</span>
+                            </div>
+                            <div id="tcsHeatmapGrid" class="grid grid-cols-8 sm:grid-cols-10 gap-1.5"></div>
                         </div>
 
                         <!-- CATEGORY-WISE CUT-OFF & SELECTION PREDICTOR -->
@@ -657,12 +795,13 @@
 
                         <div class="px-4 pt-2 flex flex-col gap-2.5">
                             <button class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-black text-sm border-0 shadow-lg cursor-pointer" onclick="openSolutions()">View Solutions & Full Analysis ➔</button>
+                            <button class="w-full py-3 rounded-2xl bg-amber-500 text-white font-black text-xs border-0 shadow cursor-pointer" onclick="createAndShareFriendChallenge()">⚔️ 1-v-1 Challenge a Friend (Copy Link)</button>
                             <button class="w-full py-3 rounded-2xl bg-rose-50 text-rose-700 border border-rose-300 font-extrabold text-xs cursor-pointer" onclick="reAttemptWrongOnlyFromCurrent()">❌ Re-Attempt Only Wrong Questions</button>
                         </div>
                     </div>
                 </div>
 
-                <!-- STEP 5: SOLUTIONS LIST TIMELINE (SLIDE 11) -->
+                <!-- STEP 5: SOLUTIONS LIST TIMELINE -->
                 <div id="solutions-screen" class="tcs-step-page tcs-hidden">
                     <div class="sol-header">
                         <span class="cursor-pointer px-2 py-1" onclick="closeSolutions()">← Back</span>
@@ -678,7 +817,7 @@
                     <div class="tcs-page-inner"><div class="sol-container" id="sol-list-container"></div></div>
                 </div>
 
-                <!-- STEP 6: INDIVIDUAL QUESTION FULL SOLUTION (SLIDE 12) -->
+                <!-- STEP 6: INDIVIDUAL QUESTION FULL SOLUTION -->
                 <div id="full-sol-screen" class="tcs-step-page tcs-hidden">
                     <div class="fs-header">
                         <span class="cursor-pointer px-2 py-1" onclick="closeFullSol()">← List</span>
@@ -716,7 +855,7 @@
             </div>
         </section>
 
-        <!-- SLIDE 3: FULL-SCREEN BORDERLESS PDF VIEWER (SLIDE 13) -->
+        <!-- SLIDE 3: FULL-SCREEN BORDERLESS PDF VIEWER -->
         <section id="slidePdf" class="slide-page hidden-slide">
             <div class="pdf-floating-bar">
                 <button onclick="closePdfSlide()" class="pdf-floating-close-btn">✕ Close</button>
@@ -751,7 +890,7 @@
         </button>
     </nav>
 
-    <!-- SMART GLOBAL SEARCH & QUICK REPORT SCREEN (SLIDE 17) -->
+    <!-- SMART GLOBAL SEARCH & QUICK REPORT SCREEN -->
     <div id="globalSearchModal" class="fixed inset-0 z-50 hidden flex flex-col search-screen-shell">
         <div class="p-3.5 border-b border-sky-200/60 flex items-center gap-2.5 max-w-2xl w-full mx-auto">
             <button onclick="closeGlobalSearchModal()" class="inner-back-btn">❮</button>
@@ -894,7 +1033,29 @@
         </div>
     </div>
 
-    <!-- DYNAMIC CACHE-BUSTING SCRIPT LOADER (SECURITY -> PRO SUITE -> APP -> TCS ENGINE) -->
+    <!-- STYLE #5 UNIFIED LIVE BAR CLOCK ENGINE -->
+    <script>
+        (function startUnifiedLiveClock() {
+            const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            function tick() {
+                const now = new Date();
+                const dEl = document.getElementById("hdrClockDate");
+                const tEl = document.getElementById("hdrClockTime");
+                if (!dEl || !tEl) return;
+                const day = String(now.getDate()).padStart(2, "0");
+                const mon = months[now.getMonth()];
+                let hrs = now.getHours();
+                const ampm = hrs >= 12 ? "PM" : "AM";
+                hrs = hrs % 12 || 12;
+                dEl.textContent = `${day} ${mon}`;
+                tEl.textContent = `${String(hrs).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")} ${ampm}`;
+            }
+            tick();
+            setInterval(tick, 1000);
+        })();
+    </script>
+
+    <!-- DYNAMIC CACHE-BUSTING SCRIPT LOADER -->
     <script>
         (function loadFreshScripts() {
             const bust = "v=" + Date.now();
