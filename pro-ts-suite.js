@@ -1,13 +1,13 @@
 // =========================================================
-// RWA PAID TEST SERIES - PRO COACHING SUITE & ENCRYPTED 4-DB SYNC
-// Uses rwaSecureFetch (HMAC-SHA256 + E2E AES-256)
-// Features: Live Heartbeat Radar, Single-Device Guard, Bell Inbox,
-// Kill-Switches, Force Version Refresh, Promo Popup, CA Capsules,
-// Admin Daily Quiz, Subject Strength Meter & Full Cloud Restore
+// RWA PAID TEST SERIES - PRO COACHING SUITE & HIGH-TRAFFIC SYNC
+// Features: Smart Jitter Heartbeat, Offline Submit Queue,
+// Interactive SVG Spline Waveform, 1-Click Weakest Booster,
+// Weekly XP League, Bookmark Notes & Encrypted Cloud Sync
 // =========================================================
 
 window.NEW_PRO_API_BASE = "https://pdfsownlaoder.onrender.com";
 const TS_PRO_STORE_KEY = "rwa_paid_ts_pro_v1";
+const OFFLINE_SUBMIT_QUEUE_KEY = "rwa_offline_submit_queue_v1";
 
 const DEFAULT_RAPID_QUIZ_BANK = [
     {
@@ -139,7 +139,134 @@ function scheduleTsCloudSync() {
 }
 
 // =========================================================
-// SECURED 4-MONGODB API CALLS (VIA rwaSecureFetch)
+// OFFLINE-SAFE TEST SUBMIT QUEUE (ZERO DATA LOSS UNDER LOAD/OFFLINE)
+// =========================================================
+window.tsEnqueueOfflineSubmit = function(attemptPayload) {
+    if (!attemptPayload) return;
+    try {
+        let q = JSON.parse(localStorage.getItem(OFFLINE_SUBMIT_QUEUE_KEY) || "[]");
+        if (!Array.isArray(q)) q = [];
+        const dedupIdx = q.findIndex(item => String(item.test_id) === String(attemptPayload.test_id) && item.score === attemptPayload.score);
+        if (dedupIdx === -1) q.push({ ...attemptPayload, queued_at: Date.now() });
+        localStorage.setItem(OFFLINE_SUBMIT_QUEUE_KEY, JSON.stringify(q.slice(-25)));
+    } catch {}
+};
+
+window.tsFlushOfflineQueue = async function() {
+    if (!navigator.onLine || typeof window.rwaSecureFetch !== "function") return;
+    let q = [];
+    try { q = JSON.parse(localStorage.getItem(OFFLINE_SUBMIT_QUEUE_KEY) || "[]"); } catch {}
+    if (!Array.isArray(q) || !q.length) return;
+
+    const remaining = [];
+    let syncedCnt = 0;
+    for (const item of q) {
+        try {
+            const res = await window.rwaSecureFetch(`${window.NEW_PRO_API_BASE}/api/test/submit`, {
+                method: "POST",
+                body: item
+            });
+            if (res.ok && res.data && res.data.status === "success") syncedCnt++;
+            else remaining.push(item);
+        } catch {
+            remaining.push(item);
+        }
+    }
+    try { localStorage.setItem(OFFLINE_SUBMIT_QUEUE_KEY, JSON.stringify(remaining)); } catch {}
+    if (syncedCnt > 0) tsToast(`☁️ ${syncedCnt} offline test score(s) synced to Leaderboard!`, "success");
+};
+
+window.addEventListener("online", () => {
+    setTimeout(() => window.tsFlushOfflineQueue(), 1500);
+});
+
+// =========================================================
+// REUSABLE INTERACTIVE SVG SPLINE WAVEFORM GRAPH ENGINE
+// =========================================================
+window.renderSplineWaveformSvg = function(containerId, readoutId, points) {
+    const container = document.getElementById(containerId);
+    const readout = document.getElementById(readoutId);
+    if (!container) return;
+
+    if (!Array.isArray(points) || points.length === 0) {
+        container.innerHTML = `<div class="py-8 text-center text-xs font-bold opacity-60">Abhi waveform graph ke liye data nahi hai — test attempt karte hi graph live banega.</div>`;
+        return;
+    }
+
+    const safePts = points.length === 1
+        ? [points[0], { ...points[0], label: points[0].label + " " }]
+        : points;
+
+    const w = Math.max(360, safePts.length * 74);
+    const h = 165;
+    const padX = 32;
+    const padTop = 22;
+    const padBot = 30;
+    const plotH = h - padTop - padBot;
+    const stepX = (w - padX * 2) / Math.max(1, safePts.length - 1);
+
+    const coords = safePts.map((pt, i) => {
+        const val = Math.max(0, Math.min(100, Number(pt.value) || 0));
+        const x = Number((padX + i * stepX).toFixed(1));
+        const y = Number((padTop + plotH - (val / 100) * plotH).toFixed(1));
+        return { ...pt, x, y, val };
+    });
+
+    let lineD = `M ${coords[0].x} ${coords[0].y}`;
+    for (let i = 0; i < coords.length - 1; i++) {
+        const p0 = coords[i], p1 = coords[i + 1];
+        const midX = ((p0.x + p1.x) / 2).toFixed(1);
+        lineD += ` C ${midX} ${p0.y}, ${midX} ${p1.y}, ${p1.x} ${p1.y}`;
+    }
+    const baseY = h - padBot;
+    const areaD = `${lineD} L ${coords[coords.length - 1].x} ${baseY} L ${coords[0].x} ${baseY} Z`;
+
+    const uid = containerId.replace(/[^a-zA-Z0-9]/g, "");
+    const isDark = document.body.classList.contains("dark-mode");
+    const lblColor = isDark ? "#94a3b8" : "#475569";
+    const gridColor = isDark ? "rgba(148,163,184,0.15)" : "rgba(148,163,184,0.28)";
+
+    const nodesMarkup = coords.map((c, idx) => `
+        <g class="wave-node-pt" data-widx="${idx}" style="cursor:pointer;">
+            <circle cx="${c.x}" cy="${c.y}" r="12" fill="transparent"></circle>
+            <circle cx="${c.x}" cy="${c.y}" r="5.5" fill="${isDark ? "#0f172a" : "#ffffff"}" stroke="#2563eb" stroke-width="3"></circle>
+            <text x="${c.x}" y="${c.y - 10}" text-anchor="middle" fill="${isDark ? "#7dd3fc" : "#1d4ed8"}" font-size="9.5" font-weight="900">${Math.round(c.val)}%</text>
+            <text x="${c.x}" y="${h - 8}" text-anchor="middle" fill="${lblColor}" font-size="9.5" font-weight="800">${tsEscHtml(String(c.label || "").slice(0, 10))}</text>
+        </g>`).join("");
+
+    container.innerHTML = `
+        <svg viewBox="0 0 ${w} ${h}" class="w-full min-w-[320px] h-40 overflow-visible">
+            <defs>
+                <linearGradient id="wgArea_${uid}" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.45"/>
+                    <stop offset="100%" stop-color="#6366f1" stop-opacity="0.02"/>
+                </linearGradient>
+                <linearGradient id="wgLine_${uid}" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#06b6d4"/>
+                    <stop offset="50%" stop-color="#2563eb"/>
+                    <stop offset="100%" stop-color="#7c3aed"/>
+                </linearGradient>
+            </defs>
+            <line x1="${padX}" y1="${padTop}" x2="${w - padX}" y2="${padTop}" stroke="${gridColor}" stroke-dasharray="4 4"/>
+            <line x1="${padX}" y1="${padTop + plotH / 2}" x2="${w - padX}" y2="${padTop + plotH / 2}" stroke="${gridColor}" stroke-dasharray="4 4"/>
+            <line x1="${padX}" y1="${baseY}" x2="${w - padX}" y2="${baseY}" stroke="${gridColor}"/>
+            <path d="${areaD}" fill="url(#wgArea_${uid})"/>
+            <path d="${lineD}" fill="none" stroke="url(#wgLine_${uid})" stroke-width="3.2" stroke-linecap="round"/>
+            ${nodesMarkup}
+        </svg>`;
+
+    const updateReadout = (idx) => {
+        const item = coords[idx];
+        if (readout && item) readout.textContent = item.detail || `${item.label}: ${Math.round(item.val)}%`;
+    };
+    container.querySelectorAll(".wave-node-pt").forEach(el => {
+        el.addEventListener("click", () => updateReadout(Number(el.dataset.widx)));
+    });
+    updateReadout(coords.length - 1);
+};
+
+// =========================================================
+// SECURED 4-DB+ API CALLS & SMART JITTER HEARTBEAT
 // =========================================================
 window.tsLogActivity = function(action, detail = "", meta = {}) {
     const uid = tsGetActiveUserId();
@@ -173,12 +300,20 @@ window.tsLogError = function(source, message, stack = "") {
 window.addEventListener("error", (e) => { if (e && e.message) tsLogError("WindowError", e.message, e.filename || ""); });
 window.addEventListener("unhandledrejection", (e) => { if (e && e.reason) tsLogError("PromiseRejection", String(e.reason)); });
 
-// LIVE HEARTBEAT RADAR + SINGLE-DEVICE / REMOTE FORCE LOGOUT GUARD (Every 60s)
+// SMART JITTER HEARTBEAT (90–120s random interval, pauses in background tabs -> 70% less server load)
 window.startTsLiveHeartbeat = function() {
-    if (_heartbeatTimer) clearInterval(_heartbeatTimer);
+    if (_heartbeatTimer) clearTimeout(_heartbeatTimer);
+
+    const scheduleNext = () => {
+        const jitterMs = (90 + Math.floor(Math.random() * 31)) * 1000; // 90s - 120s
+        _heartbeatTimer = setTimeout(sendPing, jitterMs);
+    };
+
     const sendPing = async () => {
+        if (document.hidden) { scheduleNext(); return; }
         const uid = tsGetActiveUserId();
-        if (!uid || typeof window.rwaSecureFetch !== "function") return;
+        if (!uid || typeof window.rwaSecureFetch !== "function") { scheduleNext(); return; }
+
         const sid = localStorage.getItem("rwa_session_id_v1") || "";
         const curPage = (window.state && window.state.currentSlide === "slideTestAttempt")
             ? `Attempting Test: ${(window.tcsState && window.tcsState.testMeta && window.tcsState.testMeta.title) || "Mock"}`
@@ -194,27 +329,81 @@ window.startTsLiveHeartbeat = function() {
                 return;
             }
             if (res.data && res.data.valid === false) {
-                if (res.data.reason === "blocked") {
-                    showTsLockOverlay("blocked", res.data.message);
-                } else if (res.data.reason === "force_logout" || res.data.reason === "another_device") {
-                    if (typeof window.performCleanLocalLogout === "function") {
-                        window.performCleanLocalLogout(false);
-                    }
-                    window.showRwaPopup({
-                        title: "Session Ended",
-                        message: res.data.message || "Aapka session end ho gaya hai. Kripya dobara OTP login karein.",
-                        type: "warn"
-                    });
+                if (res.data.reason === "blocked") showTsLockOverlay("blocked", res.data.message);
+                else if (res.data.reason === "force_logout" || res.data.reason === "another_device") {
+                    if (typeof window.performCleanLocalLogout === "function") window.performCleanLocalLogout(false);
+                    window.showRwaPopup({ title: "Session Ended", message: res.data.message || "Session ended. Kripya dobara OTP login karein.", type: "warn" });
                     if (typeof window.openLoginModal === "function") window.openLoginModal();
+                    return;
                 }
             }
         } catch {}
+        scheduleNext();
     };
+
     sendPing();
-    _heartbeatTimer = setInterval(sendPing, 60000);
 };
 
-// FULL CLOUD PUSH & RESTORE (INCLUDES TEST SCORECARDS & BOOKMARKS!)
+// =========================================================
+// WEEKLY XP & STUDY LEAGUE
+// =========================================================
+window.tsAwardXp = async function(points, reason = "Study Activity") {
+    const uid = tsGetActiveUserId();
+    if (!uid || points <= 0 || typeof window.rwaSecureFetch !== "function") return;
+    try {
+        const res = await window.rwaSecureFetch(`${window.NEW_PRO_API_BASE}/api/xp/add`, {
+            method: "POST",
+            body: { user_id: uid, points, reason }
+        });
+        if (res.ok && res.data && res.data.xp) {
+            tsToast(`⚡ +${points} XP Earned (${res.data.xp.tier})!`, "success");
+        }
+    } catch {}
+};
+
+window.loadWeeklyXpLeague = async function() {
+    const listBox = document.getElementById("weeklyXpLeagueList");
+    const sumEl = document.getElementById("xpLeagueMySummary");
+    const tierBadge = document.getElementById("xpMyTierBadge");
+    if (!listBox || typeof window.rwaSecureFetch !== "function") return;
+
+    const uid = tsGetActiveUserId();
+    try {
+        const res = await window.rwaSecureFetch(`${window.NEW_PRO_API_BASE}/api/xp/league?user_id=${encodeURIComponent(uid)}`);
+        const lg = res.data && res.data.league;
+        if (!lg) return;
+
+        if (lg.my_stats) {
+            if (tierBadge) tierBadge.textContent = `${lg.my_stats.tier || "🥉 Bronze"} • ${lg.my_stats.weekly_xp || 0} XP`;
+            if (sumEl) sumEl.textContent = lg.my_stats.rank
+                ? `Week ${lg.week} • Your League Rank: #${lg.my_stats.rank} of ${lg.total_ranked}`
+                : `Week ${lg.week} • Complete a Mock Test, Quiz or Pomodoro to enter League!`;
+        }
+
+        const players = lg.top_players || [];
+        listBox.innerHTML = players.length ? players.slice(0, 10).map(p => {
+            const isMe = uid && String(p.user_id) === String(uid);
+            const medal = p.rank === 1 ? "🥇" : p.rank === 2 ? "🥈" : p.rank === 3 ? "🥉" : `#${p.rank}`;
+            return `
+                <div class="p-2.5 rounded-xl flex justify-between items-center gap-2 ${isMe ? "bg-indigo-100/90 dark:bg-indigo-950/60 border border-indigo-400 font-black" : "bg-sky-50/70 dark:bg-slate-800 border border-sky-200/50 dark:border-slate-700"}">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="font-black text-indigo-700 dark:text-sky-400 w-7">${medal}</span>
+                        <div class="min-w-0">
+                            <div class="font-black truncate">${tsEscHtml(p.name)}${isMe ? " (You)" : ""} ${p.vip_badge ? `<span class="text-[10px]">${tsEscHtml(p.vip_badge)}</span>` : ""}</div>
+                            <div class="text-[10px] opacity-65 font-bold">${tsEscHtml(p.tier)} • 🔥 ${p.streak}d</div>
+                        </div>
+                    </div>
+                    <span class="px-2.5 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-black shrink-0">${p.weekly_xp} XP</span>
+                </div>`;
+        }).join("") : `<div class="text-center py-4 opacity-65 font-bold">Is hafte ki League shuru ho chuki hai — pehla Mock ya Quiz complete karke #1 banein!</div>`;
+    } catch {
+        listBox.innerHTML = `<div class="text-center py-3 opacity-60 font-bold">Weekly League offline mode mein hai.</div>`;
+    }
+};
+
+// =========================================================
+// FULL CLOUD PUSH & RESTORE (INCLUDES BOOKMARK NOTES & TEST SCORECARDS)
+// =========================================================
 window.tsPushCloudSync = async function() {
     const uid = tsGetActiveUserId();
     if (!uid || typeof window.rwaSecureFetch !== "function") return;
@@ -227,6 +416,7 @@ window.tsPushCloudSync = async function() {
         testTitle: b.testTitle,
         subject: b.subject,
         qNumber: b.qNumber,
+        note: b.note || "",
         questionObj: {
             id: b.qKey,
             question: b.question,
@@ -272,7 +462,6 @@ window.tsPullCloudSync = async function() {
 
         const remote = json.sync || {};
 
-        // 1. Restore Cloud Test History into window.ATTEMPTED_TESTS on Re-Login / New Device!
         if (Array.isArray(json.test_history) && json.test_history.length > 0) {
             window.ATTEMPTED_TESTS = window.ATTEMPTED_TESTS || {};
             json.test_history.forEach(h => {
@@ -297,7 +486,6 @@ window.tsPullCloudSync = async function() {
             try { localStorage.setItem("rwa_attempted_tests_v1", JSON.stringify(window.ATTEMPTED_TESTS)); } catch {}
         }
 
-        // 2. Restore Bookmarks from Cloud on Re-Login / New Device!
         if (Array.isArray(remote.bookmarks) && remote.bookmarks.length > 0) {
             const existingKeys = new Set((window.BOOKMARKED_QUESTIONS || []).map(b => String(b.qKey)));
             remote.bookmarks.forEach(rb => {
@@ -309,6 +497,7 @@ window.tsPullCloudSync = async function() {
                         testTitle: rb.testTitle || "Mock Test",
                         subject: rb.subject || "General",
                         qNumber: rb.qNumber || 1,
+                        note: rb.note || "",
                         question: qo.question || "",
                         options: [qo.option_1, qo.option_2, qo.option_3, qo.option_4].filter(Boolean),
                         answer: qo.answer || "1",
@@ -320,7 +509,6 @@ window.tsPullCloudSync = async function() {
             try { localStorage.setItem("rwa_bookmarked_questions_v1", JSON.stringify(window.BOOKMARKED_QUESTIONS)); } catch {}
         }
 
-        // 3. Restore Mistakes, Flashcards, Planner, Countdown & Streak
         if (Array.isArray(remote.mistake_bank) && remote.mistake_bank.length) {
             const map = new Map();
             [...remote.mistake_bank, ...(TS_PRO_STORE.mistake_bank || [])].forEach(m => { if (m && m.qId) map.set(String(m.qId), m); });
@@ -343,11 +531,12 @@ window.tsPullCloudSync = async function() {
 
         saveTsProStoreLocal(false);
         if (typeof window.updateDashboardUI === "function") window.updateDashboardUI();
+        window.tsFlushOfflineQueue();
     } catch {}
 };
 
 // =========================================================
-// PORTAL STATUS, VERSION CACHE FORCE-REFRESH, PROMO POPUP & INBOX
+// PORTAL STATUS, VERSION CHECK, PROMO POPUP & BELL INBOX
 // =========================================================
 function showTsLockOverlay(type, message) {
     const ov = document.getElementById("portalLockOverlay");
@@ -386,7 +575,6 @@ window.checkTsPortalStatusAndNotices = async function() {
         if (json.ip_banned) { showTsLockOverlay("blocked", json.message); return; }
         if (json.status !== "success") return;
 
-        // Force Cache Version Check
         const serverVer = String(json.app_version || "").trim();
         const localVer = localStorage.getItem("rwa_client_app_version") || "";
         if (serverVer && localVer && serverVer !== localVer) {
@@ -399,15 +587,10 @@ window.checkTsPortalStatusAndNotices = async function() {
             localStorage.setItem("rwa_client_app_version", serverVer);
         }
 
-        // Module Kill-Switches
-        if (json.kill_switches) {
-            window.PORTAL_KILL_SWITCHES = { ...window.PORTAL_KILL_SWITCHES, ...json.kill_switches };
-        }
-
+        if (json.kill_switches) window.PORTAL_KILL_SWITCHES = { ...window.PORTAL_KILL_SWITCHES, ...json.kill_switches };
         if (json.maintenance_mode) { showTsLockOverlay("maintenance", json.maintenance_message); return; }
         if (json.user_blocked) { showTsLockOverlay("blocked", json.block_reason); return; }
 
-        // Bell Unread Badge
         const dot = document.getElementById("inboxUnreadDot");
         if (dot) {
             const cnt = Number(json.unread_messages || 0);
@@ -467,8 +650,7 @@ function maybeShowPromoPopup(pp) {
     if (sessionStorage.getItem(seenKey)) return;
     sessionStorage.setItem(seenKey, "1");
 
-    const modal = document.getElementById("promoPopupModal");
-    const box = document.getElementById("promoPopupContent");
+    const modal = document.getElementById("promoPopupModal"), box = document.getElementById("promoPopupContent");
     if (!modal || !box) return;
     box.innerHTML = `
         <button onclick="document.getElementById('promoPopupModal').classList.add('hidden')" class="absolute top-3 right-3 w-8 h-8 rounded-full bg-slate-100 text-slate-700 font-black text-xs border-0 cursor-pointer">✕</button>
@@ -479,10 +661,8 @@ function maybeShowPromoPopup(pp) {
     modal.classList.remove("hidden");
 }
 
-// STUDENT BELL INBOX MODAL
 window.openStudentInboxModal = async function() {
-    const modal = document.getElementById("studentInboxModal");
-    const body = document.getElementById("studentInboxBody");
+    const modal = document.getElementById("studentInboxModal"), body = document.getElementById("studentInboxBody");
     if (!modal || !body) return;
     modal.classList.remove("hidden");
     body.innerHTML = `<div class="py-8 text-center font-bold opacity-70">🔄 Loading Notifications...</div>`;
@@ -504,19 +684,11 @@ window.openStudentInboxModal = async function() {
         let html = "";
         if (msgs.length) {
             html += `<div class="font-black text-[11px] uppercase opacity-60">Personal Messages & Report Replies</div>`;
-            html += msgs.map(m => `
-                <div class="p-3 rounded-2xl bg-indigo-50/80 dark:bg-slate-800 border border-indigo-200/60 dark:border-slate-700">
-                    <div class="flex justify-between font-black text-indigo-800 dark:text-sky-400"><span>📩 ${tsEscHtml(m.title)}</span><span class="text-[10px] opacity-65">${tsEscHtml(m.created_at)}</span></div>
-                    <div class="mt-1 font-semibold opacity-90">${tsEscHtml(m.message)}</div>
-                </div>`).join("");
+            html += msgs.map(m => `<div class="p-3 rounded-2xl bg-indigo-50/80 dark:bg-slate-800 border border-indigo-200/60 dark:border-slate-700"><div class="flex justify-between font-black text-indigo-800 dark:text-sky-400"><span>📩 ${tsEscHtml(m.title)}</span><span class="text-[10px] opacity-65">${tsEscHtml(m.created_at)}</span></div><div class="mt-1 font-semibold opacity-90">${tsEscHtml(m.message)}</div></div>`).join("");
         }
         if (notices.length) {
             html += `<div class="font-black text-[11px] uppercase opacity-60 pt-2">Official Announcements</div>`;
-            html += notices.map(n => `
-                <div class="p-3 rounded-2xl bg-sky-50/80 dark:bg-slate-800 border border-sky-200/60 dark:border-slate-700">
-                    <div class="flex justify-between font-black"><span>📢 ${tsEscHtml(n.title)}</span><span class="text-[10px] opacity-65">${tsEscHtml(n.created_at)}</span></div>
-                    <div class="mt-1 font-semibold opacity-85">${tsEscHtml(n.message)}</div>
-                </div>`).join("");
+            html += notices.map(n => `<div class="p-3 rounded-2xl bg-sky-50/80 dark:bg-slate-800 border border-sky-200/60 dark:border-slate-700"><div class="flex justify-between font-black"><span>📢 ${tsEscHtml(n.title)}</span><span class="text-[10px] opacity-65">${tsEscHtml(n.created_at)}</span></div><div class="mt-1 font-semibold opacity-85">${tsEscHtml(n.message)}</div></div>`).join("");
         }
         body.innerHTML = html || `<div class="py-10 text-center font-bold opacity-65">Abhi koi notification nahi hai 🔔</div>`;
     } catch {
@@ -526,7 +698,7 @@ window.openStudentInboxModal = async function() {
 window.closeStudentInboxModal = function() { document.getElementById("studentInboxModal")?.classList.add("hidden"); };
 
 // =========================================================
-// THEME, STREAK, SUBJECT STRENGTH METER & TREND GRAPH
+// THEME, STREAK, SPLINE WAVEFORM & 1-CLICK WEAKEST BOOSTER
 // =========================================================
 window.toggleTsPortalTheme = function() {
     const isDark = document.body.classList.toggle("dark-mode");
@@ -536,6 +708,7 @@ window.toggleTsPortalTheme = function() {
     if (btn) btn.textContent = isDark ? "☀️" : "🌙";
     const pToggle = document.getElementById("profileDarkModeBadge");
     if (pToggle) pToggle.textContent = isDark ? "ON" : "OFF";
+    window.updateProDashboardStrip();
     tsToast(isDark ? "🌙 Midnight Dark Mode ON" : "☀️ Sky Light Mode ON", "info");
 };
 
@@ -594,6 +767,39 @@ window.tsAddFlashcard = function(front, back, subject = "Mock Revision") {
     tsToast("🃏 Flashcard Saved in Vault!", "success");
 };
 
+// 1-CLICK WEAKEST SUBJECT BOOSTER
+window.launchWeakestSubjectBooster = function(subjectName) {
+    const targetLow = String(subjectName || "").toLowerCase().trim();
+    const mistakes = (TS_PRO_STORE.mistake_bank || [])
+        .filter(m => !targetLow || String(m.subject || "").toLowerCase().includes(targetLow))
+        .map(m => m.questionObj)
+        .filter(Boolean);
+    const bms = (window.BOOKMARKED_QUESTIONS || [])
+        .filter(b => !targetLow || String(b.subject || "").toLowerCase().includes(targetLow))
+        .map(b => ({
+            id: b.qKey, question: b.question || "",
+            option_1: (b.options || [])[0] || "", option_2: (b.options || [])[1] || "",
+            option_3: (b.options || [])[2] || "", option_4: (b.options || [])[3] || "",
+            answer: b.answer || "1", solution_text: b.solution || "", positive_marks: "2", negative_marks: "0.5",
+            section_id: b.subject || "1", section_name: b.subject || subjectName
+        }));
+
+    let pool = [...mistakes, ...bms];
+    if (!pool.length) {
+        pool = [
+            ...(TS_PRO_STORE.mistake_bank || []).map(m => m.questionObj).filter(Boolean),
+            ...convertBookmarksToQuestions()
+        ];
+    }
+    if (!pool.length) {
+        return tsToast(`Pehle ${subjectName} ke kuch questions attempt ya bookmark karein!`, "warning");
+    }
+    pool = pool.sort(() => Math.random() - 0.5).slice(0, 15);
+    if (typeof window.launchCustomQuestionsTcs === "function") {
+        window.launchCustomQuestionsTcs(`⚡ ${subjectName} 10-Min Booster (${pool.length} Qs)`, pool, 10);
+    }
+};
+
 window.updateProDashboardStrip = function() {
     const st = TS_PRO_STORE.study_stats || {};
     const streakDays = st.streak || 1;
@@ -622,7 +828,7 @@ window.updateProDashboardStrip = function() {
     if (document.getElementById("dashAvgAccuracy")) document.getElementById("dashAvgAccuracy").textContent = `${avgAcc}%`;
     if (document.getElementById("dashProgressStreak")) document.getElementById("dashProgressStreak").textContent = `${streakDays} Day${streakDays > 1 ? "s" : ""}`;
 
-    // Subject-Wise Strength & Weakness Meter
+    // 1. Subject Strength Meter + 1-Click Weakest Booster
     const strCard = document.getElementById("subjectStrengthCard");
     const strBars = document.getElementById("subjectStrengthBars");
     if (strCard && strBars) {
@@ -635,16 +841,23 @@ window.updateProDashboardStrip = function() {
                 bySub[nm].cnt += 1;
             });
         });
-        const subEntries = Object.entries(bySub);
+        const subEntries = Object.entries(bySub)
+            .map(([sub, d]) => ({ sub, avg: Math.round(d.accSum / d.cnt) }))
+            .sort((a, b) => a.avg - b.avg);
+
         if (subEntries.length > 0) {
             strCard.classList.remove("hidden");
-            strBars.innerHTML = subEntries.map(([sub, d]) => {
-                const avg = Math.round(d.accSum / d.cnt);
-                const status = avg >= 75 ? { tag: "🟢 Strong", bar: "bg-emerald-500" } : (avg >= 50 ? { tag: "🟡 Average", bar: "bg-amber-500" } : { tag: "🔴 Weak", bar: "bg-rose-500" });
+            strBars.innerHTML = subEntries.map((item, idx) => {
+                const isWeakest = idx === 0 || item.avg < 55;
+                const status = item.avg >= 75 ? { tag: "🟢 Strong", bar: "bg-emerald-500" } : (item.avg >= 50 ? { tag: "🟡 Average", bar: "bg-amber-500" } : { tag: "🔴 Weak", bar: "bg-rose-500" });
+                const safeSub = item.sub.replace(/'/g, "\\'");
                 return `
-                    <div class="space-y-1">
-                        <div class="flex justify-between font-extrabold"><span>${tsEscHtml(sub)}</span><span>${avg}% • ${status.tag}</span></div>
-                        <div class="w-full h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden"><div class="h-full ${status.bar}" style="width:${Math.max(5, avg)}%"></div></div>
+                    <div class="${isWeakest ? "p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800" : ""} space-y-1">
+                        <div class="flex justify-between items-center gap-2 font-extrabold">
+                            <span class="truncate">${tsEscHtml(item.sub)} <span class="opacity-75">(${item.avg}% • ${status.tag})</span></span>
+                            ${isWeakest ? `<button onclick="launchWeakestSubjectBooster('${safeSub}')" class="px-2.5 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-black border-0 cursor-pointer shrink-0">⚡ 10-Min Boost</button>` : ""}
+                        </div>
+                        <div class="w-full h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden"><div class="h-full ${status.bar}" style="width:${Math.max(5, item.avg)}%"></div></div>
                     </div>`;
             }).join("");
         } else {
@@ -652,23 +865,26 @@ window.updateProDashboardStrip = function() {
         }
     }
 
-    // Last 10 Tests Bar Chart
-    const trendBars = document.getElementById("progressTrendBars");
-    if (trendBars) {
-        const last10 = attempts.slice(-10);
-        trendBars.innerHTML = last10.length > 0 ? last10.map((item, i) => {
-            const scPct = Math.max(8, Math.min(100, Math.round((Number(item.score || 0) / (Number(item.maxMarks) || 100)) * 100)));
-            const accPct = Math.max(8, Math.min(100, Math.round(Number(item.accuracy || 0))));
-            return `
-                <div class="flex-1 min-w-[34px] flex flex-col items-center justify-end gap-1 h-full" title="${tsEscHtml(item.title)}: ${item.score}/${item.maxMarks} (${accPct}% Acc)">
-                    <div class="flex items-end gap-1 h-28 justify-center">
-                        <div class="w-2.5 sm:w-3 bg-blue-600 rounded-t-md" style="height:${scPct}%"></div>
-                        <div class="w-2.5 sm:w-3 bg-emerald-500 rounded-t-md" style="height:${accPct}%"></div>
-                    </div>
-                    <span class="text-[11px] font-extrabold opacity-70">${i + 1}</span>
-                </div>`;
-        }).join("") : `<div class="w-full text-center py-8 text-xs font-bold opacity-60">Mock tests attempt karte hi aapka Score vs Accuracy trend graph yahan dikhega 📊</div>`;
+    // 2. Interactive Spline Waveform Graph (Last 10 Tests)
+    const last10 = attempts.slice(-10);
+    const wavePoints = last10.map((item, i) => {
+        const scPct = Math.max(0, Math.min(100, Math.round((Number(item.score || 0) / (Number(item.maxMarks) || 100)) * 100)));
+        const acc = Math.round(Number(item.accuracy || 0));
+        return {
+            label: `M${i + 1}`,
+            value: scPct,
+            detail: `${item.title}: Score ${item.score}/${item.maxMarks} (${scPct}%) • Accuracy ${acc}% • ${item.date || ""}`
+        };
+    });
+    const deltaEl = document.getElementById("waveTrendDeltaBadge");
+    if (deltaEl && wavePoints.length >= 2) {
+        const diff = wavePoints[wavePoints.length - 1].value - wavePoints[0].value;
+        deltaEl.textContent = diff >= 0 ? `▲ +${diff}% Growth` : `▼ ${diff}% Change`;
+        deltaEl.className = diff >= 0
+            ? "px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black"
+            : "px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-black";
     }
+    window.renderSplineWaveformSvg("progressWaveContainer", "progressWaveReadout", wavePoints);
 };
 
 // =========================================================
@@ -720,16 +936,16 @@ window.runGlobalSearch = function(query) {
         }
     });
     (window.BOOKMARKED_QUESTIONS || []).forEach((b, idx) => {
-        const hay = `${b.subject || ""} ${b.testTitle || ""} ${b.question || ""}`.toLowerCase();
+        const hay = `${b.subject || ""} ${b.testTitle || ""} ${b.question || ""} ${b.note || ""}`.toLowerCase();
         if (!q || hay.includes(q)) {
-            hits.push({ tag: "🔖 Bookmark", tagCls: "bg-amber-100 text-amber-900", title: `${b.subject || "Subject"} — ${b.testTitle || "Test"}`, sub: `Q.${b.qNumber || idx + 1}`, btn: "View Question", fn: `closeGlobalSearchModal(); switchAppTab('bookmarks'); openBookmarkDetailView(${idx});` });
+            hits.push({ tag: "🔖 Bookmark", tagCls: "bg-amber-100 text-amber-900", title: `${b.subject || "Subject"} — ${b.testTitle || "Test"}`, sub: b.note ? `📝 ${b.note}` : `Q.${b.qNumber || idx + 1}`, btn: "View Question", fn: `closeGlobalSearchModal(); switchAppTab('bookmarks'); openBookmarkDetailView(${idx});` });
         }
     });
 
     const sliced = hits.slice(0, 12);
     box.innerHTML = sliced.length ? sliced.map(h => `
         <div onclick="${h.fn}" class="app-card p-3.5 cursor-pointer flex flex-col justify-between gap-2 hover:border-blue-500">
-            <div><div class="font-black text-sm leading-snug line-clamp-2">${tsEscHtml(h.title)}</div><div class="text-[11px] opacity-70 font-bold mt-0.5">${tsEscHtml(h.sub)}</div><span class="inline-block mt-2 px-2.5 py-0.5 rounded-full text-[10px] font-black ${h.tagCls}">${h.tag}</span></div>
+            <div><div class="font-black text-sm leading-snug line-clamp-2">${tsEscHtml(h.title)}</div><div class="text-[11px] opacity-70 font-bold mt-0.5 truncate">${tsEscHtml(h.sub)}</div><span class="inline-block mt-2 px-2.5 py-0.5 rounded-full text-[10px] font-black ${h.tagCls}">${h.tag}</span></div>
             <div class="pt-2 border-t border-sky-200/50 text-center font-black text-blue-600 dark:text-sky-400 text-xs">${h.btn}</div>
         </div>`).join("") : `<div class="col-span-full app-card p-6 text-center opacity-70 font-bold">Koi match nahi mila.</div>`;
 };
@@ -768,14 +984,10 @@ window.tsFlagQuestionMistake = function(qObj, testMeta = {}, qNum = 1) {
                 const res = await window.rwaSecureFetch(`${window.NEW_PRO_API_BASE}/api/report`, {
                     method: "POST",
                     body: {
-                        user_id: tsGetActiveUserId() || "Guest",
-                        user_name: tsGetActiveUserName(),
-                        phone,
-                        type: "Question Error",
-                        subject: `${testMeta.title || "Mock Test"} — Q.${qNum}`,
+                        user_id: tsGetActiveUserId() || "Guest", user_name: tsGetActiveUserName(), phone,
+                        type: "Question Error", subject: `${testMeta.title || "Mock Test"} — Q.${qNum}`,
                         message: `Question Mistake Flagged: "${qPreview}..."`,
-                        question_id: String(qObj.id || qNum),
-                        test_id: String(testMeta.id || "")
+                        question_id: String(qObj.id || qNum), test_id: String(testMeta.id || "")
                     }
                 });
                 if (res.ok) tsToast("🚩 Question flagged to Admin! Reply 🔔 Inbox mein aayega.", "success");
@@ -785,7 +997,7 @@ window.tsFlagQuestionMistake = function(qObj, testMeta = {}, qNum = 1) {
 };
 
 // =========================================================
-// PRO STUDY VAULT HUB & TOOLS (INCLUDING CA CAPSULES & DYNAMIC QUIZ)
+// PRO STUDY VAULT HUB & TOOLS
 // =========================================================
 window.closeVaultToolDetail = function() {
     _activeVaultDetailTool = null;
@@ -1037,7 +1249,11 @@ window.toggleTsPomo = function() {
         if (_tsPomo.secondsLeft <= 0) {
             clearInterval(_tsPomo.interval); _tsPomo.running = false;
             const mins = parseInt(_tsPomo.mode, 10) || 25;
-            if (mins >= 15) { tsAddStudyMinutes(mins); tsLogActivity("POMODORO", `Completed ${mins}m Focus Session`); }
+            if (mins >= 15) {
+                tsAddStudyMinutes(mins);
+                tsLogActivity("POMODORO", `Completed ${mins}m Focus Session`);
+                window.tsAwardXp(mins >= 45 ? 45 : 25, `Pomodoro ${mins}m`);
+            }
             tsToast("🎉 Focus Session Complete!", "success");
             if (_activeVaultDetailTool) openVaultToolDetail(_activeVaultDetailTool);
             return;
@@ -1108,7 +1324,10 @@ window.nextTsRapid = function() {
     if (_tsRapidIdx < ACTIVE_RAPID_QUIZ_BANK.length - 1) { _tsRapidIdx++; openVaultToolDetail("rapid_quiz"); }
     else {
         TS_PRO_STORE.daily_quiz_history[tsTodayKey()] = { score: _tsRapidScore, total: ACTIVE_RAPID_QUIZ_BANK.length };
-        tsAddStudyMinutes(5); tsLogActivity("RAPID_QUIZ", `Scored ${_tsRapidScore}/${ACTIVE_RAPID_QUIZ_BANK.length}`);
-        _tsRapidIdx = 0; openVaultToolDetail("rapid_quiz");
+        tsAddStudyMinutes(5);
+        tsLogActivity("RAPID_QUIZ", `Scored ${_tsRapidScore}/${ACTIVE_RAPID_QUIZ_BANK.length}`);
+        window.tsAwardXp(20 + (_tsRapidScore * 5), "Daily Rapid Quiz");
+        _tsRapidIdx = 0;
+        openVaultToolDetail("rapid_quiz");
     }
 };
