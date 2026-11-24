@@ -1,9 +1,10 @@
 // =========================================================
 // RWA PAID TEST SERIES - ULTRA PRO TCS CBT ENGINE (tcs-engine.js)
-// Features: Cloud Vault Auto-Save & Zero-502 Fallback, Local IDB
-// Edge Cache, Multi-Worker Failover, Strict Real-Exam Mode,
-// 4-Colour Time-Heatmap, Section Spline Waveform, 1-v-1 Challenge,
-// Offline-Safe Submit Queue & Branded Scorecard PNG
+// Features: Read-Only Cloud Vault Fallback (Zero Student Writes),
+// Local IDB Edge Cache, Multi-Worker Failover (502 Cooldown),
+// Strict Real-Exam Mode, 4-Colour Time-Heatmap, Section Spline
+// Waveform, 1-v-1 Friend Challenge, Offline-Safe Submit Queue &
+// Branded Scorecard PNG
 // =========================================================
 
 let NEXT_BUILD_ID = localStorage.getItem("rwa_next_build_id") || "TDvVxPHlB8LGPavKJeaEV";
@@ -296,7 +297,9 @@ window.saveAndExitForResume = function() {
 window.discardAndCloseTest = function() { clearPausedTestState(); window.closeTcsActionModal(); window.exitCbtTest(); };
 
 // =========================================================
-// MULTI-WORKER FAILOVER + CLOUD CONTENT VAULT + LOCAL IDB EDGE CACHE
+// MULTI-WORKER FAILOVER + READ-ONLY CLOUD VAULT + LOCAL IDB EDGE CACHE
+// (Zero Student Writes to Server Vault — Vault is populated ONLY
+//  by the 11PM-12AM Nightly Auto-Scanner or Admin Panel!)
 // =========================================================
 function getLoggedInUserAuthDetails() {
     let tokObj = (tcsState.testMeta && tcsState.testMeta.tokenObj) || (window.state && window.state.activeTokenObj) || (Array.isArray(window.USER_TOKENS) && window.USER_TOKENS[0]) || null;
@@ -370,12 +373,8 @@ async function fetchTestFromCloudVault(testId) {
     return null;
 }
 
-function saveTestToCloudVaultBg(t, loadedQuestions, orderedServerSections, exactTestMeta, pagePropsObj) {
+function saveTestToLocalCacheBg(t, loadedQuestions, orderedServerSections, exactTestMeta) {
     if (!t || !t.id || t.isCustom || !Array.isArray(loadedQuestions) || !loadedQuestions.length) return;
-    if (typeof window.rwaSecureFetch !== "function") return;
-    const apiBase = window.NEW_PRO_API_BASE || "https://pdfsownlaoder.onrender.com";
-
-    // Also cache in Local IndexedDB for instant 0ms reload on same device
     if (typeof window.rwaIdbSet === "function") {
         window.rwaIdbSet(`vault_local_test_${t.id}`, {
             test_id: String(t.id),
@@ -385,39 +384,12 @@ function saveTestToCloudVaultBg(t, loadedQuestions, orderedServerSections, exact
             cached_at: Date.now()
         });
     }
-
-    const payload = {
-        test_id: String(t.id),
-        series_id: String(t.seriesId || t.test_series_id || (window.state && window.state.activeSeriesId) || ""),
-        subject_id: String((window.state && window.state.activeTsSubId) || "-1"),
-        title: (exactTestMeta && exactTestMeta.title) || t.title || `Test #${t.id}`,
-        terms_meta: {
-            title: (exactTestMeta && exactTestMeta.title) || t.title || "",
-            time: (exactTestMeta && exactTestMeta.time) || t.time || "60",
-            marks: (exactTestMeta && exactTestMeta.marks) || t.marks || "",
-            restrict_part_switching: (exactTestMeta && exactTestMeta.restrict_part_switching) || t.restrict_part_switching || "0",
-            show_sectionselector: (exactTestMeta && exactTestMeta.show_sectionselector) || t.show_sectionselector || "0",
-            maximumsection: (exactTestMeta && exactTestMeta.maximumsection) || "",
-            minimumsection: (exactTestMeta && exactTestMeta.minimumsection) || "",
-            language: (exactTestMeta && exactTestMeta.language) || "",
-            pdf_url: (exactTestMeta && exactTestMeta.pdf_url) || t.resolvedPdf || t.pdf_url || ""
-        },
-        page_props_meta: { buildId: NEXT_BUILD_ID },
-        sections: orderedServerSections || [],
-        questions: loadedQuestions
-    };
-
-    // Backend deduplicates via SHA-256 content_hash -> ZERO duplicates!
-    window.rwaSecureFetch(`${apiBase}/api/vault/save_test`, {
-        method: "POST",
-        body: payload
-    }).catch(() => {});
 }
 
 async function fetchQuestionsAndSectionsForMeta(t) {
     let exactTestMeta = null, pagePropsObj = null, loadedQuestions = [], externalSecMap = {}, orderedServerSections = [];
 
-    // 1. Check Cloud Vault & Live Terms in parallel when possible (Cloud Vault rescues 502 & deleted upstream tests!)
+    // 1. Read Cloud Vault (read-only) & Live Terms in parallel (Vault rescues 502 & deleted upstream tests!)
     const [vaultDoc, rawJsonData] = await Promise.all([
         fetchTestFromCloudVault(t.id),
         fetchRwaNextTermsData(t)
@@ -470,13 +442,14 @@ async function fetchQuestionsAndSectionsForMeta(t) {
         if (qJson) loadedQuestions = Array.isArray(qJson) ? qJson : (qJson.data || qJson.questions || []);
     }
 
-    // Auto-Save fresh live questions & terms to Cloud Content Vault (Zero Duplicates!)
+    // Cache locally in Device IndexedDB for instant offline reload (zero server POSTs!)
     if (loadedQuestions.length > 0) {
-        saveTestToCloudVaultBg(t, loadedQuestions, orderedServerSections, exactTestMeta, pagePropsObj);
+        saveTestToLocalCacheBg(t, loadedQuestions, orderedServerSections, exactTestMeta);
     } else if (vaultDoc && Array.isArray(vaultDoc.questions) && vaultDoc.questions.length > 0) {
         // Live upstream deleted or unreachable -> Serve seamlessly from Cloud Content Vault!
         loadedQuestions = vaultDoc.questions;
         exactTestMeta = exactTestMeta || vaultDoc.terms_meta || {};
+        saveTestToLocalCacheBg(t, loadedQuestions, orderedServerSections, exactTestMeta);
         if (typeof window.tsToast === "function") window.tsToast("☁️ Loaded smoothly from Cloud Vault!", "info");
     } else if (typeof window.rwaIdbGet === "function") {
         // Final fallback: Device IndexedDB Edge Cache
